@@ -1,6 +1,6 @@
 // popup.js — Outreach Tracker + Job Applier extension popup
 
-const DEFAULT_BACKEND = 'https://outreach-tracker.onrender.com';
+const DEFAULT_BACKEND = 'https://outreach-tracker-j73i.onrender.com';
 
 // ── STORAGE HELPERS ────────────────────────────────────────────────────────────
 async function getSettings() {
