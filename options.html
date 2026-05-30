@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Outreach Extension Settings</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 14px;
+      background: #0f0f13;
+      color: #e8e8f0;
+      padding: 32px;
+      max-width: 560px;
+    }
+    h1 { font-size: 20px; color: #c8b4ff; margin-bottom: 6px; }
+    .sub { color: #666; font-size: 12px; margin-bottom: 32px; }
+    .section { margin-bottom: 28px; }
+    .section h2 { font-size: 13px; font-weight: 700; color: #c8b4ff; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 12px; }
+    label { display: block; color: #aaa; font-size: 12px; margin-bottom: 4px; margin-top: 12px; }
+    input[type="text"], input[type="url"], input[type="tel"], input[type="email"], textarea, select {
+      width: 100%;
+      background: #1a1a24;
+      border: 1px solid #2a2a3a;
+      border-radius: 6px;
+      color: #e8e8f0;
+      padding: 9px 12px;
+      font-size: 13px;
+      outline: none;
+    }
+    input:focus, textarea:focus, select:focus { border-color: #c8b4ff; }
+    textarea { resize: vertical; min-height: 80px; }
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .btn-save {
+      background: #7c4dff;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 10px 24px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: background 0.15s;
+    }
+    .btn-save:hover { background: #9c6dff; }
+    .toast {
+      display: inline-block;
+      margin-left: 12px;
+      color: #44cc88;
+      font-size: 12px;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .toast.show { opacity: 1; }
+    hr { border: none; border-top: 1px solid #2a2a3a; margin: 24px 0; }
+    .hint { color: #555; font-size: 11px; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <h1>&#9881; Extension Settings</h1>
+  <p class="sub">Configure your backend URL and resume data for auto-apply.</p>
+
+  <div class="section">
+    <h2>Backend Connection</h2>
+    <label>Outreach Tracker Backend URL</label>
+    <input type="url" id="backendUrl" placeholder="https://your-app.onrender.com" />
+    <p class="hint">Your deployed Outreach Tracker URL (Render, Railway, etc.)</p>
+  </div>
+
+  <hr />
+
+  <div class="section">
+    <h2>Resume / Profile Data (for Auto-Apply)</h2>
+    <p class="hint" style="margin-bottom:12px;">This data is stored locally in your browser and used to fill application forms automatically.</p>
+
+    <div class="row2">
+      <div>
+        <label>First Name</label>
+        <input type="text" id="firstName" placeholder="Jane" />
+      </div>
+      <div>
+        <label>Last Name</label>
+        <input type="text" id="lastName" placeholder="Smith" />
+      </div>
+    </div>
+
+    <div class="row2">
+      <div>
+        <label>Email</label>
+        <input type="email" id="email" placeholder="jane@example.com" />
+      </div>
+      <div>
+        <label>Phone</label>
+        <input type="tel" id="phone" placeholder="+1 555 000 0000" />
+      </div>
+    </div>
+
+    <div class="row2">
+      <div>
+        <label>City</label>
+        <input type="text" id="city" placeholder="New York" />
+      </div>
+      <div>
+        <label>ZIP / Postal</label>
+        <input type="text" id="zip" placeholder="10001" />
+      </div>
+    </div>
+
+    <label>Current / Target Job Title</label>
+    <input type="text" id="title" placeholder="Software Engineer" />
+
+    <label>Years of Experience</label>
+    <input type="text" id="yearsExp" placeholder="3" />
+
+    <label>LinkedIn URL</label>
+    <input type="url" id="linkedin" placeholder="https://linkedin.com/in/yourhandle" />
+
+    <label>GitHub URL</label>
+    <input type="url" id="github" placeholder="https://github.com/yourhandle" />
+
+    <label>Portfolio / Website</label>
+    <input type="url" id="website" placeholder="https://yoursite.com" />
+
+    <label>Desired Salary (optional)</label>
+    <input type="text" id="salary" placeholder="120000" />
+
+    <div class="row2" style="margin-top:12px;">
+      <div>
+        <label>Country</label>
+        <input type="text" id="country" placeholder="United States" />
+      </div>
+      <div>
+        <label>Work Authorization</label>
+        <select id="workAuth">
+          <option value="">Select...</option>
+          <option value="US Citizen">US Citizen</option>
+          <option value="Green Card">Green Card</option>
+          <option value="H1B">H1B</option>
+          <option value="OPT">OPT / STEM OPT</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+    </div>
+
+    <label>Requires Visa Sponsorship?</label>
+    <select id="requiresSponsorship">
+      <option value="false">No</option>
+      <option value="true">Yes</option>
+    </select>
+
+    <label>Default Cover Letter</label>
+    <textarea id="coverLetter" placeholder="Dear Hiring Manager,&#10;&#10;I am excited to apply for..."></textarea>
+  </div>
+
+  <button class="btn-save" id="btn-save">Save Settings</button>
+  <span class="toast" id="toast">Saved!</span>
+
+  <script src="options.js"></script>
+</body>
+</html>

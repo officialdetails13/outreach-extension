@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Outreach Tracker</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="header">
+    <span class="logo">&#127919;</span>
+    <span class="title">Outreach Tracker</span>
+    <a href="#" id="openOptions" class="settings-btn" title="Settings">&#9881;</a>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="outreach">Outreach</button>
+    <button class="tab" data-tab="jobs">Jobs</button>
+    <button class="tab" data-tab="apply">Auto-Apply</button>
+  </div>
+
+  <!-- OUTREACH TAB -->
+  <div id="tab-outreach" class="tab-content active">
+    <div id="page-context" class="context-banner hidden">
+      <span id="context-label"></span>
+      <button id="btn-add-from-page" class="btn-primary btn-sm">+ Add to Outreach</button>
+    </div>
+
+    <div class="search-row">
+      <input id="search-input" type="text" placeholder="Search domain or company..." />
+      <button id="btn-refresh" class="icon-btn" title="Refresh">&#8635;</button>
+    </div>
+
+    <div id="outreach-list" class="scroll-list">
+      <div class="empty-state">Loading...</div>
+    </div>
+
+    <div class="add-form hidden" id="add-form">
+      <div class="form-title">Add Contact</div>
+      <input id="f-domain" type="text" placeholder="Domain (e.g. acme.com)" />
+      <input id="f-company" type="text" placeholder="Company name" />
+      <input id="f-name" type="text" placeholder="Contact name" />
+      <input id="f-email" type="text" placeholder="Email (optional)" />
+      <select id="f-stage">
+        <option value="identified">Identified</option>
+        <option value="contacted">Contacted</option>
+        <option value="replied">Replied</option>
+        <option value="interviewing">Interviewing</option>
+        <option value="offer">Offer</option>
+        <option value="rejected">Rejected</option>
+      </select>
+      <div class="form-actions">
+        <button id="btn-save" class="btn-primary">Save</button>
+        <button id="btn-cancel" class="btn-ghost">Cancel</button>
+      </div>
+    </div>
+
+    <button id="btn-show-add" class="btn-full">+ New Contact</button>
+  </div>
+
+  <!-- JOBS TAB -->
+  <div id="tab-jobs" class="tab-content hidden">
+    <div class="section-header">
+      <span>Scraped Jobs</span>
+      <span class="badge" id="jobs-count">0</span>
+    </div>
+    <div class="filter-row">
+      <input id="jobs-search" type="text" placeholder="Filter by title or company..." />
+      <select id="jobs-status-filter">
+        <option value="">All</option>
+        <option value="pending">Pending</option>
+        <option value="applied">Applied</option>
+        <option value="skipped">Skipped</option>
+      </select>
+    </div>
+    <div id="jobs-list" class="scroll-list">
+      <div class="empty-state">
+        <p>No jobs yet.</p>
+        <p class="hint">Phase 2: Connect your job scraper to populate this list.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- AUTO-APPLY TAB -->
+  <div id="tab-apply" class="tab-content hidden">
+    <div class="apply-status" id="apply-status">
+      <div class="status-icon" id="status-icon">&#9899;</div>
+      <div class="status-text" id="status-text">Idle</div>
+    </div>
+
+    <div class="apply-controls">
+      <div class="control-row">
+        <label>Delay between apps (sec)</label>
+        <input id="apply-delay" type="number" value="5" min="2" max="60" />
+      </div>
+      <div class="control-row">
+        <label>Max to apply per session</label>
+        <input id="apply-max" type="number" value="10" min="1" max="100" />
+      </div>
+      <div class="control-row toggle-row">
+        <label>Skip already applied</label>
+        <input id="apply-skip-applied" type="checkbox" checked />
+      </div>
+    </div>
+
+    <div id="apply-progress" class="progress-section hidden">
+      <div class="progress-bar-wrap">
+        <div class="progress-bar" id="progress-bar" style="width:0%"></div>
+      </div>
+      <div class="progress-label" id="progress-label">0 / 0 applied</div>
+      <div id="apply-log" class="apply-log"></div>
+    </div>
+
+    <div class="apply-btn-row">
+      <button id="btn-start-apply" class="btn-primary btn-full">&#9654; Start Auto-Apply</button>
+      <button id="btn-stop-apply" class="btn-danger btn-full hidden">&#9646;&#9646; Stop</button>
+    </div>
+
+    <div class="hint center">Auto-Apply opens each job URL and fills the form automatically. Requires jobs in the Jobs tab.</div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
