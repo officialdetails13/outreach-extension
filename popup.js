@@ -355,16 +355,19 @@ document.getElementById('btn-fill-now').addEventListener('click', async () => {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
-    // Inject content script if not already present (handles pages loaded before extension)
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ['content.js'],
-    }).catch(() => {}); // ignore if already injected
+    // Inject content script + CSS into pages that were open before the extension loaded
+    await Promise.all([
+      chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] }).catch(() => {}),
+      chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: ['content.css'] }).catch(() => {}),
+    ]);
+
+    // Wait for the injected script to register its message listener
+    await new Promise(r => setTimeout(r, 200));
 
     const response = await new Promise((resolve, reject) => {
       chrome.tabs.sendMessage(tab.id, { type: 'AUTO_APPLY' }, res => {
         if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-        else resolve(res);
+        else resolve(res || { success: true });
       });
     });
 

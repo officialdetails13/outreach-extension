@@ -1,6 +1,5 @@
 // content.js — Holistic form filler with Claude AI fallback
-// Guard against double-injection on SPA navigations
-if (window.__OT_LOADED__) { throw new Error('OT already loaded'); }
+if (window.__OT_LOADED__) { /* already running — do nothing */ } else {
 window.__OT_LOADED__ = true;
 
 // ── BOOT ──────────────────────────────────────────────────────────────────────
@@ -604,3 +603,5 @@ function debounce(fn, ms) {
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+} // end guard block
