@@ -163,89 +163,150 @@ function escHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
-// ── FILL LEARNED FIELDS WITH AI ───────────────────────────────────────────────
+// ── CLEAR ALL LEARNED FIELDS ──────────────────────────────────────────────────
+$('btn-clear-all-learned').addEventListener('click', () => {
+  if (!confirm('Clear all saved form answers? This cannot be undone.')) return;
+  chrome.storage.local.set({ learnedAnswers: {} }, () => {
+    renderLearnedFields({});
+    const status = $('ai-fill-status');
+    status.textContent = '🗑 Cleared all saved answers.';
+    status.style.display = 'block';
+    setTimeout(() => { status.style.display = 'none'; }, 3000);
+  });
+});
+
+// ── FILL WITH AI (profile + learned answers in one call) ──────────────────────
 $('btn-fill-ai').addEventListener('click', async () => {
   const btn    = $('btn-fill-ai');
   const status = $('ai-fill-status');
 
-  // Collect empty labels from current DOM (includes unsaved ones)
-  const emptyFields = [];
-  document.querySelectorAll('.learned-answer').forEach(ta => {
-    if (!ta.value.trim()) emptyFields.push(ta.dataset.label);
-  });
-
-  // Also include any stored empty fields not yet rendered
-  const stored = await new Promise(r => chrome.storage.local.get(['learnedAnswers'], d => r(d.learnedAnswers || {})));
-  Object.entries(stored).forEach(([label, val]) => {
-    if (!val && !emptyFields.includes(label)) emptyFields.push(label);
-  });
-
-  if (!emptyFields.length) {
-    status.textContent = '✅ All fields already have answers!';
-    status.style.display = 'block';
-    return;
-  }
-
   const apiKey = $('claudeApiKey').value.trim();
   if (!apiKey) {
-    status.textContent = '⚠️ Add your Claude API key above first.';
+    status.textContent = '⚠️ Add your Claude API key in the Claude AI section above first.';
     status.style.display = 'block';
     return;
   }
+
+  const local = await new Promise(r => chrome.storage.local.get(['resumeText','resumeData','learnedAnswers'], r));
+  const resumeContext = local.resumeText || buildResumeContext(local.resumeData || {});
+
+  if (!resumeContext || resumeContext === 'No profile data available.') {
+    status.textContent = '⚠️ Upload your resume or paste resume text in the Resume section first.';
+    status.style.display = 'block';
+    return;
+  }
+
+  // Collect empty learned fields (from DOM + stored)
+  const stored = local.learnedAnswers || {};
+  const emptyLearnedFields = [];
+  const seenLabels = new Set();
+
+  document.querySelectorAll('.learned-answer').forEach(el => {
+    const lbl = el.dataset.label;
+    if (!lbl || seenLabels.has(lbl)) return;
+    seenLabels.add(lbl);
+    const val = el.type === 'radio'
+      ? (document.querySelector(`.learned-answer[data-label="${CSS.escape(lbl)}"]:checked`)?.value || '')
+      : el.value.trim();
+    if (!val) {
+      const entry = stored[lbl];
+      emptyLearnedFields.push({
+        label:   lbl,
+        type:    entry?.type || 'textarea',
+        options: entry?.options || [],
+      });
+    }
+  });
+
+  Object.entries(stored).forEach(([label, val]) => {
+    const answer = typeof val === 'string' ? val : val?.answer;
+    if (!answer && !seenLabels.has(label)) {
+      emptyLearnedFields.push({ label, type: val?.type || 'textarea', options: val?.options || [] });
+    }
+  });
 
   btn.disabled    = true;
   btn.textContent = '⏳ Asking Claude...';
-  status.textContent = `Filling ${emptyFields.length} field${emptyFields.length !== 1 ? 's' : ''}...`;
+  status.textContent = `Parsing resume + filling ${emptyLearnedFields.length} answer${emptyLearnedFields.length !== 1 ? 's' : ''}...`;
   status.style.display = 'block';
 
-  // Build resume context from stored data
-  const local = await new Promise(r => chrome.storage.local.get(['resumeText','resumeData'], r));
-  const resumeContext = local.resumeText || buildResumeContext(local.resumeData || {});
+  const prompt = `You are setting up a job application autofill system. Parse the applicant's resume and fill in their profile.
 
-  const fieldList = emptyFields.map(label => ({ label, type: 'textarea' }));
-  const prompt = `You are helping pre-fill a job application answer bank for an applicant.
-
-APPLICANT PROFILE:
+RESUME / PROFILE TEXT:
 ${resumeContext}
 
-For each question below, provide a concise, professional answer the applicant can use on job applications.
-- Short factual fields (salary, city, etc): just the value
-- Essay/behavioral questions: 2-4 professional sentences using STAR method where relevant
-- For option fields with listed choices: pick the most appropriate option text exactly
+TASK 1 — Extract structured profile data from the resume. Return exact values (empty string if not found):
+Fields: firstName, lastName, email, phone, address, city, state, zip, country,
+title, employer, yearsExp, school, fieldOfStudy, gradYear,
+linkedin, github, website, salary, workAuth, degree
 
-FIELDS (respond as JSON array in same order):
-${JSON.stringify(fieldList)}
+TASK 2 — Answer these job application fields based on the resume:
+${JSON.stringify(emptyLearnedFields.map(f => ({
+  label: f.label,
+  type: f.type,
+  ...(f.options?.length ? { options: f.options } : {}),
+})))}
 
-Respond ONLY with valid JSON: [{"label":"...","answer":"..."}]`;
+For TASK 2:
+- Short factual fields: just the value
+- Essay/behavioral: 2-4 professional sentences
+- Radio/select with options listed: return EXACTLY one of the listed option values
+- Consent checkboxes: return "yes"
+
+Respond ONLY with this exact JSON structure:
+{
+  "profile": { "firstName": "", "lastName": "", ... },
+  "answers": [{ "label": "...", "answer": "..." }]
+}`;
 
   chrome.runtime.sendMessage({ type: 'CLAUDE_COMPLETE', prompt, apiKey }, response => {
     btn.disabled    = false;
     btn.textContent = '🤖 Fill All with AI';
 
-    if (response.error) {
+    if (response?.error) {
       status.textContent = '❌ Claude error: ' + response.error;
       return;
     }
 
     try {
-      let raw = response.text.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/i,'');
-      const answers = JSON.parse(raw);
-      let filled = 0;
+      let raw = (response.text || '').trim()
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '');
+      const result = JSON.parse(raw);
 
-      answers.forEach(({ label, answer }) => {
-        if (!answer) return;
-        // Fill rendered textareas
-        const ta = document.querySelector(`.learned-answer[data-label="${label.replace(/"/g,'&quot;')}"]`);
-        if (ta) { ta.value = answer; filled++; }
-        // Also update stored object so it persists even if not rendered
-        if (stored[label] !== undefined) stored[label] = answer;
-      });
+      // ── Apply profile fields (only overwrite empty ones) ──
+      let profileFilled = 0;
+      if (result.profile) {
+        Object.entries(result.profile).forEach(([key, val]) => {
+          if (!val) return;
+          const el = $(key);
+          if (!el) return;
+          if (el.value.trim()) return; // don't overwrite existing data
+          el.value = val;
+          el.style.borderColor = '#7c4dff';
+          profileFilled++;
+        });
+      }
 
-      // Save Claude answers to storage immediately
-      chrome.storage.local.set({ learnedAnswers: stored });
-      // Re-render with filled values
-      renderLearnedFields(stored);
-      status.textContent = `✅ Filled ${filled} field${filled !== 1 ? 's' : ''} — review and click Save All Settings.`;
+      // ── Apply learned answers ──
+      let answersFilled = 0;
+      if (result.answers) {
+        result.answers.forEach(({ label, answer }) => {
+          if (!answer) return;
+          // Update stored object
+          if (stored[label] !== undefined) {
+            if (typeof stored[label] === 'string') stored[label] = answer;
+            else stored[label] = { ...stored[label], answer };
+          } else {
+            stored[label] = { answer, type: 'textarea', options: [] };
+          }
+          answersFilled++;
+        });
+        chrome.storage.local.set({ learnedAnswers: stored });
+        renderLearnedFields(stored);
+      }
+
+      status.textContent = `✅ Profile: ${profileFilled} field${profileFilled !== 1 ? 's' : ''} filled · Answers: ${answersFilled} filled — click Save All Settings to keep.`;
     } catch (e) {
       status.textContent = '❌ Could not parse Claude response. Try again.';
     }

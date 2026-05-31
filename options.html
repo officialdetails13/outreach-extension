@@ -120,6 +120,12 @@
     }
     .btn-fill-ai:hover { background: #2a1a4a; border-color: #7c4dff; }
     .btn-fill-ai:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-clear-all {
+      background: none; color: #ff5566; border: 1px solid #3a2020;
+      border-radius: 6px; padding: 8px 14px; font-size: 12px; font-weight: 600;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .btn-clear-all:hover { background: #2e1a1a; border-color: #ff5566; }
     .learned-radio-group { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
     .learned-radio-item {
       display: flex; align-items: center; gap: 6px;
@@ -282,7 +288,10 @@
       When autofill can't answer a field, it saves it here. Fill in your answers once —
       they'll be used automatically on every future form.
     </p>
-    <button class="btn-fill-ai" id="btn-fill-ai">🤖 Fill All with AI</button>
+    <div style="display:flex; gap:8px; margin-bottom:10px; align-items:center;">
+      <button class="btn-fill-ai" id="btn-fill-ai">🤖 Fill All with AI</button>
+      <button class="btn-clear-all" id="btn-clear-all-learned">🗑 Clear All</button>
+    </div>
     <div id="ai-fill-status" class="hint" style="margin-bottom:12px; display:none;"></div>
     <div id="learned-fields-list">
       <div class="no-learned">No unanswered fields yet. Run autofill on a form to populate this list.</div>
