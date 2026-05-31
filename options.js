@@ -59,14 +59,14 @@ document.querySelectorAll('.topbar-tab').forEach(btn => {
     btn.classList.add('active');
     const tab = btn.dataset.tab;
     // Hide all tab panels
-    document.getElementById('tab-applications').style.display = 'none';
-    document.getElementById('tab-answers').style.display      = 'none';
-    document.querySelector('.page:not(#tab-applications):not(#tab-answers)').style.display = 'none';
-    // Show selected
-    if (tab === 'applications') { document.getElementById('tab-applications').style.display = 'block'; loadApplicationLog(); }
-    else if (tab === 'answers') { document.getElementById('tab-answers').style.display = 'block'; loadAnswersTab(); }
-    else document.querySelector('.page:not(#tab-applications):not(#tab-answers)').style.display = '';
-    document.getElementById('btn-save').style.display = tab === 'settings' ? '' : 'none';
+    $('tab-settings').style.display     = 'none';
+    $('tab-answers').style.display      = 'none';
+    $('tab-applications').style.display = 'none';
+    // Show selected panel
+    if (tab === 'applications') { $('tab-applications').style.display = 'block'; loadApplicationLog(); }
+    else if (tab === 'answers') { $('tab-answers').style.display      = 'block'; loadAnswersTab(); }
+    else                        { $('tab-settings').style.display     = 'block'; }
+    $('btn-save').style.display = tab === 'settings' ? '' : 'none';
   });
 });
 
