@@ -400,19 +400,30 @@ function mapFromResume(field, r) {
   const ctx = `${field.label} ${field.name} ${field.el?.id || ''} ${field.el?.getAttribute('autocomplete') || ''}`.toLowerCase();
 
   if (field.type === 'select' || field.type === 'radio') {
-    return mapSelectableFromResume(field, r, ctx);
+    return mapSelectableFromResume(field, r, ctx) || exactLabelLookup(field.label, r);
   }
 
-  if (field.type === 'checkbox') return null; // handled by Claude
+  if (field.type === 'checkbox') return null;
 
-  // Text fields
+  // Text fields — regex pattern matching first
   for (const { re, key, fn } of RESUME_MAP) {
     if (re.test(ctx)) {
       return fn ? fn(r) : (r[key] || null);
     }
   }
 
-  return null;
+  // Exact label match — catches any previously answered field stored by label key
+  return exactLabelLookup(field.label, r);
+}
+
+function exactLabelLookup(label, r) {
+  if (!label) return null;
+  // Direct key match (e.g. r["Veteran Status"] = "Not a veteran")
+  if (r[label]) return r[label];
+  // Case-insensitive match
+  const lower = label.toLowerCase();
+  const key = Object.keys(r).find(k => k.toLowerCase() === lower);
+  return key ? r[key] : null;
 }
 
 function mapSelectableFromResume(field, r, ctx) {

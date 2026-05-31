@@ -502,16 +502,24 @@ $('btn-save').addEventListener('click', () => {
   const claudeEnabled = $('claudeEnabled').checked;
   const resumeText    = $('resumeText').value.trim();
 
-  // Feed learned answers back into matching profile fields
+  // 1. Feed answered learned fields into matching named profile inputs
   Object.entries(learnedAnswers).forEach(([label, val]) => {
     const answer = typeof val === 'string' ? val : val?.answer;
     if (answer) applyAnswerToProfile(label, answer);
   });
 
-  // Re-collect profile after feeding learned answers back
+  // 2. Re-collect profile inputs after the feedback above
   RESUME_FIELDS.forEach(f => {
     const el = $(f);
     if (el) resumeData[f] = el.value;
+  });
+
+  // 3. Merge ALL answered learned fields directly into resumeData using their
+  //    label as key — this makes every answered field available for exact-label
+  //    matching in content.js, so the profile grows with each new form filled.
+  Object.entries(learnedAnswers).forEach(([label, val]) => {
+    const answer = typeof val === 'string' ? val : val?.answer;
+    if (answer && label) resumeData[label] = answer;
   });
 
   chrome.storage.sync.set({ backendUrl: $('backendUrl').value.trim() });
