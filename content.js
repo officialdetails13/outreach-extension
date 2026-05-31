@@ -1,5 +1,25 @@
 // content.js — Holistic form filler with Claude AI fallback
 (function () {
+
+// ── MESSAGE LISTENER — registered on every injection so extension reloads
+//    don't leave orphaned handlers with broken chrome.runtime connections.
+//    window.__OT_RUNNING__ prevents concurrent fills across multiple injections.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'GET_PAGE_DATA') {
+    sendResponse(typeof scrapePageData === 'function' ? scrapePageData() : {});
+    return true;
+  }
+  if (msg.type === 'AUTO_APPLY') {
+    if (window.__OT_RUNNING__) { sendResponse({ success: true }); return true; }
+    window.__OT_RUNNING__ = true;
+    handleAutofillClick()
+      .then(() => { window.__OT_RUNNING__ = false; sendResponse({ success: true }); })
+      .catch(() => { window.__OT_RUNNING__ = false; sendResponse({ success: false }); });
+    return true;
+  }
+});
+
+// Guard everything else — overlay button injection and function definitions
 if (window.__OT_LOADED__) return;
 window.__OT_LOADED__ = true;
 
@@ -690,18 +710,6 @@ function scrapeLinkedIn(domain) {
 }
 
 // ── MESSAGE LISTENER ──────────────────────────────────────────────────────────
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type === 'GET_PAGE_DATA') {
-    sendResponse(scrapePageData());
-    return true;
-  }
-  if (msg.type === 'AUTO_APPLY') {
-    // Legacy auto-apply from background (keeps backward compat)
-    handleAutofillClick().then(() => sendResponse({ success: true }));
-    return true;
-  }
-});
-
 // ── UTILITIES ─────────────────────────────────────────────────────────────────
 async function getStorage() {
   return new Promise(resolve => {

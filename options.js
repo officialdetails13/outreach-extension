@@ -476,29 +476,59 @@ Respond ONLY with the JSON object.`;
 $('btn-update-profile').addEventListener('click', () => {
   const status = $('ai-fill-status');
 
+  // Step 1: read current answers directly from the DOM (not storage —
+  // the user may have typed answers without clicking Save All Settings)
+  const fromDOM = {};
+  const seen    = new Set();
+  document.querySelectorAll('.learned-answer').forEach(el => {
+    const lbl = el.dataset.label;
+    if (!lbl || seen.has(lbl)) return;
+    seen.add(lbl);
+    let answer = '';
+    if (el.type === 'radio') {
+      const checked = document.querySelector(`.learned-answer[data-label="${CSS.escape(lbl)}"]:checked`);
+      answer = checked ? checked.value : '';
+    } else {
+      answer = el.value.trim();
+    }
+    fromDOM[lbl] = answer;
+  });
+
+  // Step 2: load stored learnedAnswers to get type/options metadata,
+  // then merge DOM answers in
   chrome.storage.local.get(['learnedAnswers', 'resumeData'], d => {
-    const learned        = d.learnedAnswers || {};
-    const resumeData     = d.resumeData    || {};
-    const remaining      = {}; // fields that had no answer — keep them
+    const storedLearned = d.learnedAnswers || {};
+    const resumeData    = d.resumeData    || {};
+    const remaining     = {};
     let saved = 0;
 
-    Object.entries(learned).forEach(([label, val]) => {
-      const answer = typeof val === 'string' ? val : val?.answer;
+    // Process every entry in stored learned (DOM may have a subset rendered)
+    Object.entries(storedLearned).forEach(([label, storedVal]) => {
+      // Prefer the live DOM value over what was previously stored
+      const domAnswer = fromDOM[label];
+      const storedAnswer = typeof storedVal === 'string' ? storedVal : storedVal?.answer;
+      const answer = domAnswer !== undefined ? domAnswer : storedAnswer;
+
       if (!answer || !label) {
-        remaining[label] = val; // unanswered — keep in the list
+        remaining[label] = storedVal; // unanswered — keep in list
         return;
       }
 
-      // Feed into named profile input if a match exists
+      // Update the stored entry with the current answer
+      if (typeof storedVal === 'object') {
+        storedLearned[label] = { ...storedVal, answer };
+      }
+
+      // Feed into matching named profile input
       applyAnswerToProfile(label, answer);
 
-      // Store by exact label for future autofill
+      // Store by exact label so future autofill finds it in Pass 1
       resumeData[label] = answer;
       saved++;
-      // answered fields are NOT added to remaining — they disappear from the list
+      // answered → removed from remaining (disappears from list)
     });
 
-    // Re-collect named profile inputs after mapping
+    // Re-collect named profile inputs after the mapping above
     RESUME_FIELDS.forEach(f => {
       const el = $(f);
       if (el) resumeData[f] = el.value;
