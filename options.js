@@ -1,5 +1,46 @@
 // options.js — load/save extension settings
 
+// Maps learned-field labels back to profile input IDs
+const LABEL_TO_PROFILE = [
+  { re: /first.?name|given.?name/i,          field: 'firstName' },
+  { re: /last.?name|family.?name|surname/i,  field: 'lastName' },
+  { re: /\bemail\b/i,                         field: 'email' },
+  { re: /phone|telephone|mobile|cell/i,       field: 'phone' },
+  { re: /\baddress\b|street/i,                field: 'address' },
+  { re: /\bcity\b|town/i,                     field: 'city' },
+  { re: /\bstate\b|province/i,                field: 'state' },
+  { re: /zip|postal/i,                        field: 'zip' },
+  { re: /country/i,                           field: 'country' },
+  { re: /current.?title|job.?title|most.?recent.?title/i, field: 'title' },
+  { re: /employer|company|organization/i,     field: 'employer' },
+  { re: /years?.?of?.?exp|experience/i,       field: 'yearsExp' },
+  { re: /school|university|college/i,         field: 'school' },
+  { re: /field.?of.?study|major/i,            field: 'fieldOfStudy' },
+  { re: /grad.?year|graduation/i,             field: 'gradYear' },
+  { re: /linkedin/i,                          field: 'linkedin' },
+  { re: /github/i,                            field: 'github' },
+  { re: /portfolio|website/i,                 field: 'website' },
+  { re: /salary|compensation|pay/i,           field: 'salary' },
+  { re: /work.?auth|authorization|visa/i,     field: 'workAuth' },
+  { re: /sponsor/i,                           field: 'requiresSponsorship' },
+  { re: /degree|education.?level/i,           field: 'degree' },
+  { re: /cover.?letter/i,                     field: 'coverLetter' },
+];
+
+function applyAnswerToProfile(label, answer) {
+  for (const { re, field } of LABEL_TO_PROFILE) {
+    if (re.test(label)) {
+      const el = $(field);
+      if (el && answer) {
+        el.value = answer;
+        el.classList.add('profile-updated');
+        setTimeout(() => el.classList.remove('profile-updated'), 2000);
+      }
+      return;
+    }
+  }
+}
+
 const RESUME_FIELDS = [
   'firstName','lastName','email','phone',
   'address','city','state','zip','country',
@@ -330,6 +371,85 @@ function buildResumeContext(r) {
   return parts.join('\n') || 'No profile data available.';
 }
 
+// ── PARSE RESUME → FILL PROFILE ───────────────────────────────────────────────
+$('btn-parse-resume').addEventListener('click', async () => {
+  const btn    = $('btn-parse-resume');
+  const status = $('parse-status');
+  const apiKey = $('claudeApiKey').value.trim();
+  const text   = $('resumeText').value.trim();
+
+  if (!text) {
+    status.textContent = '⚠️ Paste your resume text above first.';
+    status.style.display = 'block';
+    return;
+  }
+  if (!apiKey) {
+    status.textContent = '⚠️ Add your Claude API key in the Claude AI section first.';
+    status.style.display = 'block';
+    return;
+  }
+
+  btn.disabled    = true;
+  btn.textContent = '⏳ Parsing...';
+  status.textContent = 'Extracting profile data from resume...';
+  status.style.display = 'block';
+
+  const prompt = `Extract structured profile data from this resume. Return ONLY a JSON object with these exact keys (empty string if not found):
+
+{
+  "firstName": "", "lastName": "", "email": "", "phone": "",
+  "address": "", "city": "", "state": "", "zip": "", "country": "",
+  "title": "", "employer": "", "yearsExp": "", "degree": "",
+  "school": "", "fieldOfStudy": "", "gradYear": "",
+  "linkedin": "", "github": "", "website": "",
+  "salary": "", "workAuth": "", "requiresSponsorship": "",
+  "coverLetter": ""
+}
+
+For workAuth use one of: US Citizen, Green Card, H1B, OPT, Other
+For requiresSponsorship use: true or false
+For salary: annual number only (e.g. "120000")
+For yearsExp: number only (e.g. "4")
+For coverLetter: write a 3-sentence professional summary based on their background
+
+RESUME:
+${text}
+
+Respond ONLY with the JSON object.`;
+
+  chrome.runtime.sendMessage({ type: 'CLAUDE_COMPLETE', prompt, apiKey }, response => {
+    btn.disabled    = false;
+    btn.textContent = '🔍 Parse Resume → Fill Profile';
+
+    if (!response || response.error) {
+      status.textContent = '❌ ' + (response?.error || 'No response. Reload the extension and try again.');
+      return;
+    }
+
+    try {
+      let raw = response.text.trim()
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '');
+      const profile = JSON.parse(raw);
+      let filled = 0;
+
+      Object.entries(profile).forEach(([key, val]) => {
+        if (!val) return;
+        const el = $(key);
+        if (!el) return;
+        el.value = val;
+        el.classList.add('profile-updated');
+        setTimeout(() => el.classList.remove('profile-updated'), 2500);
+        filled++;
+      });
+
+      status.textContent = `✅ Extracted ${filled} profile fields — click Save All Settings to keep.`;
+    } catch (e) {
+      status.textContent = '❌ Could not parse response. Try again.';
+    }
+  });
+});
+
 // ── SAVE ──────────────────────────────────────────────────────────────────────
 $('btn-save').addEventListener('click', () => {
   // Profile data
@@ -359,12 +479,23 @@ $('btn-save').addEventListener('click', () => {
   const claudeApiKey = $('claudeApiKey').value.trim();
   const resumeText   = $('resumeText').value.trim();
 
+  // Feed learned answers back into matching profile fields
+  Object.entries(learnedAnswers).forEach(([label, val]) => {
+    const answer = typeof val === 'string' ? val : val?.answer;
+    if (answer) applyAnswerToProfile(label, answer);
+  });
+
+  // Re-collect profile after feeding learned answers back
+  RESUME_FIELDS.forEach(f => {
+    const el = $(f);
+    if (el) resumeData[f] = el.value;
+  });
+
   chrome.storage.sync.set({ backendUrl: $('backendUrl').value.trim() });
   chrome.storage.local.set({ resumeData, claudeApiKey, resumeText, learnedAnswers }, () => {
     const toast = $('toast');
     toast.classList.add('show');
     setTimeout(() => toast.classList.remove('show'), 2000);
-    // Re-render learned fields to update badges
     renderLearnedFields(learnedAnswers);
   });
 });

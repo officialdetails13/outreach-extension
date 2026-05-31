@@ -126,6 +126,14 @@
       cursor: pointer; transition: all 0.15s;
     }
     .btn-clear-all:hover { background: #2e1a1a; border-color: #ff5566; }
+    .btn-parse-resume {
+      margin-top: 10px; background: #1a2e1a; color: #44cc88;
+      border: 1px solid #2a5a3a; border-radius: 6px; padding: 9px 16px;
+      font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; width: 100%;
+    }
+    .btn-parse-resume:hover { background: #1e3e22; border-color: #44cc88; }
+    .btn-parse-resume:disabled { opacity: 0.5; cursor: not-allowed; }
+    .profile-updated { border-color: #44cc88 !important; transition: border-color 0.4s; }
     .learned-radio-group { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
     .learned-radio-item {
       display: flex; align-items: center; gap: 6px;
@@ -178,6 +186,9 @@
     <label>Resume Text (paste for best AI results)</label>
     <textarea id="resumeText" rows="8" placeholder="Paste your full resume text here. Claude uses this to answer open-ended questions on your behalf.&#10;&#10;Include: work experience, skills, education, achievements, and anything you'd normally write in a cover letter."></textarea>
     <p class="hint">The more detail you provide, the better Claude can answer essay and short-answer questions.</p>
+
+    <button class="btn-parse-resume" id="btn-parse-resume">🔍 Parse Resume → Fill Profile</button>
+    <div id="parse-status" class="hint" style="margin-top:6px; display:none;"></div>
   </div>
 
   <hr />
