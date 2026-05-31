@@ -487,7 +487,9 @@ function scanAllFields() {
   const seen   = new Set();
 
   document.querySelectorAll('input, select, textarea').forEach(el => {
-    if (!el.offsetParent && el.type !== 'hidden') return; // invisible
+    // Allow hidden file inputs through — Greenhouse/Lever hide them behind "Attach" buttons
+    const isHiddenFile = el.type === 'file' && !el.offsetParent;
+    if (!el.offsetParent && el.type !== 'hidden' && !isHiddenFile) return;
     if (el.disabled || el.readOnly) return;
     if (seen.has(el)) return;
     seen.add(el);
@@ -532,7 +534,8 @@ function scanAllFields() {
       return;
     }
 
-    fields.push({ el, type, name: el.name || el.id, label: getLabel(el) });
+    const label = getLabel(el) || getFileInputLabel(el);
+    fields.push({ el, type, name: el.name || el.id, label });
   });
 
   // ── Custom / ARIA comboboxes (non-native selects) ─────────────────────────
@@ -604,6 +607,24 @@ function getLabel(el) {
 
   // 4. Fall back to name/id (never use placeholder — it's example data, not a label)
   return el.name || el.id || '';
+}
+
+// For hidden file inputs (Greenhouse/Lever "Attach" pattern), look at the
+// surrounding section heading since getLabel can't find a visible label.
+function getFileInputLabel(el) {
+  if (el.type !== 'file') return '';
+  const nameAttr = (el.name || el.id || el.getAttribute('aria-label') || '').toLowerCase();
+  if (/resume|cv|curriculum/i.test(nameAttr)) return 'Resume/CV';
+  if (/cover/i.test(nameAttr)) return 'Cover Letter';
+  // Walk up to find a section label
+  let node = el.parentElement;
+  while (node && node !== document.body) {
+    const heading = node.querySelector('h1,h2,h3,h4,label,[class*="label"],[class*="heading"],[class*="title"]');
+    if (heading && heading.innerText.trim()) return heading.innerText.replace(/[*✱]/g,'').trim();
+    if (/resume|cv|upload|attach/i.test(node.className || '')) return 'Resume/CV';
+    node = node.parentElement;
+  }
+  return '';
 }
 
 function getGroupLabel(radioGroup) {
@@ -807,6 +828,9 @@ async function fillField(field, value) {
 
 function fillText(el, value) {
   if (el.value === String(value)) return true;
+  // Focus first — React and Vue track focus state for validation
+  el.focus();
+  el.dispatchEvent(new Event('focus', { bubbles: true }));
   triggerReactSetter(el, 'value', value);
   el.value = value;
   el.dispatchEvent(new Event('input',  { bubbles: true }));
@@ -871,11 +895,17 @@ async function fillCombobox(field, value) {
   const isCountry = /country|nation/i.test(field.label + field.name);
   const searchVal = isCountry ? normaliseCountry(value) : value.toLowerCase();
 
-  // Step 1: open the dropdown
+  // Step 1: open the dropdown — try the element and its parent trigger
   el.focus();
-  el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
   el.click();
-  await sleep(200);
+  // Also click the parent wrapper (Greenhouse wraps comboboxes in a clickable div)
+  const trigger = el.closest('[class*="select"], [class*="dropdown"], [class*="combo"]') || el.parentElement;
+  if (trigger && trigger !== el) {
+    trigger.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    trigger.click();
+  }
+  await sleep(300);
 
   // Step 2: type to filter options
   triggerReactSetter(el, 'value', value);
