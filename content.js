@@ -2,15 +2,10 @@
 if (window.__OT_LOADED__) { /* already running — do nothing */ } else {
 window.__OT_LOADED__ = true;
 
-// ── BOOT ──────────────────────────────────────────────────────────────────────
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', boot);
-} else {
-  boot();
-}
-
+// ── VARS (must be declared before boot() is called) ───────────────────────────
 let _overlayBtn = null;
 
+// ── BOOT ──────────────────────────────────────────────────────────────────────
 function boot() {
   watchForForms();
 }
@@ -603,5 +598,12 @@ function debounce(fn, ms) {
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ── INIT (called last so all functions and vars are defined first) ─────────────
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', boot);
+} else {
+  boot();
+}
 
 } // end guard block
