@@ -79,9 +79,9 @@ function setOverlayState(state) {
 async function handleAutofillClick() {
   setOverlayState('loading');
 
-  const { resumeData, claudeApiKey } = await getStorage();
+  const { resumeData, claudeApiKey, resumeFile, resumeText, learnedAnswers } = await getStorage();
   if (!resumeData || !Object.keys(resumeData).length) {
-    showToast('⚠️ No resume data found. Open the extension → Settings and fill in your profile first.', 'warn');
+    showToast('⚠️ No profile data. Open extension → Settings and fill in your profile first.', 'warn');
     setOverlayState('idle');
     return;
   }
@@ -90,21 +90,26 @@ async function handleAutofillClick() {
   const unmapped = [];
   let   filled   = 0;
 
-  // Pass 1: fill from resume data
+  // Pass 1: fill from resume profile data
   for (const field of fields) {
+    // File inputs — try stored resume, else highlight
     if (field.type === 'file') {
-      highlightFileInput(field.el);
+      if (resumeFile?.base64) {
+        const ok = await fillFileInput(field.el, resumeFile.base64, resumeFile.name);
+        if (ok) filled++;
+        else highlightFileInput(field.el);
+      } else {
+        highlightFileInput(field.el);
+      }
       continue;
     }
+
     const value = mapFromResume(field, resumeData);
     if (value !== null && value !== undefined && value !== '') {
       const ok = await fillField(field, value);
       if (ok) {
         filled++;
-        if (requiresValidation(field)) {
-          const valid = validateSelectableField(field);
-          if (!valid) unmapped.push(field); // fill didn't stick, try Claude
-        }
+        if (requiresValidation(field) && !validateSelectableField(field)) unmapped.push(field);
       } else {
         unmapped.push(field);
       }
@@ -114,30 +119,62 @@ async function handleAutofillClick() {
     await sleep(30);
   }
 
-  // Pass 2: Claude for unmapped/essay fields
-  const claudeFields = unmapped.filter(f => f.type !== 'file' && f.type !== 'checkbox');
+  // Pass 2: check learned answers (user-supplied answers from previous runs)
+  const stillUnmapped = [];
+  for (const field of unmapped) {
+    const key    = (field.label || field.name || '').trim();
+    const answer = learnedAnswers[key];
+    if (answer) {
+      const ok = await fillField(field, answer);
+      if (ok) {
+        filled++;
+        if (requiresValidation(field)) validateSelectableField(field);
+      } else {
+        stillUnmapped.push(field);
+      }
+    } else {
+      stillUnmapped.push(field);
+    }
+    await sleep(30);
+  }
+
+  // Pass 3: Claude for anything still unmapped
+  const claudeFields = stillUnmapped.filter(f => f.type !== 'file' && f.type !== 'checkbox');
   if (claudeFields.length && claudeApiKey) {
     setOverlayState('claude');
     try {
-      const answers = await askClaude(claudeFields, resumeData, claudeApiKey);
+      const resumeContext = resumeText || buildResumeSummary(resumeData);
+      const answers = await askClaude(claudeFields, resumeContext, claudeApiKey);
+      const truelyUnfilled = [];
       for (const { field, answer } of answers) {
         if (answer) {
           const ok = await fillField(field, answer);
-          if (ok) filled++;
-          if (requiresValidation(field)) validateSelectableField(field);
+          if (ok) {
+            filled++;
+            if (requiresValidation(field)) validateSelectableField(field);
+          } else {
+            truelyUnfilled.push(field);
+          }
+        } else {
+          truelyUnfilled.push(field);
         }
         await sleep(30);
       }
+      // Save any fields Claude couldn't answer for user to fill in Settings
+      if (truelyUnfilled.length) await saveLearnedFields(truelyUnfilled);
     } catch (err) {
       showToast(`🤖 Claude error: ${err.message}`, 'warn');
+      await saveLearnedFields(claudeFields);
     }
-  } else if (claudeFields.length && !claudeApiKey) {
-    showToast(`💡 ${claudeFields.length} fields need AI answers. Add your Claude API key in Settings.`, 'info');
+  } else if (claudeFields.length) {
+    // No API key — save all unmapped fields for user to answer in Settings
+    await saveLearnedFields(claudeFields);
+    showToast(`💡 ${claudeFields.length} fields saved to Settings → "Saved Form Answers". Fill them once to use forever.`, 'info');
   }
 
   const leftover = scanAllFields().filter(f => !isFieldFilled(f) && f.type !== 'file');
   setOverlayState(leftover.length === 0 ? 'done' : 'error');
-  showToast(`✅ Filled ${filled} field${filled !== 1 ? 's' : ''}${leftover.length ? ` · ${leftover.length} need review` : ''}`, 'success');
+  showToast(`✅ Filled ${filled} field${filled !== 1 ? 's' : ''}${leftover.length ? ` · ${leftover.length} saved to Settings` : ''}`, 'success');
 }
 
 // ── FIELD SCANNER ─────────────────────────────────────────────────────────────
@@ -427,6 +464,23 @@ function fillCheckbox(el, value) {
   return true;
 }
 
+async function fillFileInput(el, base64, fileName) {
+  try {
+    const [meta, data] = base64.split(',');
+    const mimeType = meta.match(/:(.*?);/)[1];
+    const binary   = atob(data);
+    const bytes    = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const file = new File([bytes], fileName || 'resume.pdf', { type: mimeType });
+    const dt   = new DataTransfer();
+    dt.items.add(file);
+    el.files = dt.files;
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    el.classList.add('ot-filled');
+    return true;
+  } catch { return false; }
+}
+
 function highlightFileInput(el) {
   el.style.outline = '3px solid #7c4dff';
   el.style.borderRadius = '4px';
@@ -463,18 +517,17 @@ function isFieldFilled(field) {
 }
 
 // ── CLAUDE FALLBACK ───────────────────────────────────────────────────────────
-async function askClaude(fields, resumeData, apiKey) {
+async function askClaude(fields, resumeContext, apiKey) {
   const fieldDescriptions = fields.map(f => {
     const base = { label: f.label || f.name, type: f.type };
     if (f.options?.length) base.options = f.options.map(o => o.text || o.value);
     return base;
   });
 
-  const resumeSummary = buildResumeSummary(resumeData);
   const prompt = `You are filling out a job application form on behalf of the applicant.
 
 APPLICANT PROFILE:
-${resumeSummary}
+${resumeContext}
 
 Fill the following form fields. For each field, return the best answer based on the applicant's profile.
 - For radio/select fields, return EXACTLY one of the listed option values/texts.
@@ -571,7 +624,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ── UTILITIES ─────────────────────────────────────────────────────────────────
 async function getStorage() {
   return new Promise(resolve => {
-    chrome.storage.local.get({ resumeData: {}, claudeApiKey: '' }, resolve);
+    chrome.storage.local.get({
+      resumeData: {},
+      claudeApiKey: '',
+      resumeFile: null,
+      resumeText: '',
+      learnedAnswers: {},
+    }, resolve);
+  });
+}
+
+async function saveLearnedFields(fields) {
+  return new Promise(resolve => {
+    chrome.storage.local.get({ learnedAnswers: {} }, d => {
+      const updated = { ...d.learnedAnswers };
+      fields.forEach(f => {
+        const key = (f.label || f.name || '').trim();
+        if (key && updated[key] === undefined) updated[key] = ''; // blank = needs answer
+      });
+      chrome.storage.local.set({ learnedAnswers: updated }, resolve);
+    });
   });
 }
 
