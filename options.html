@@ -170,6 +170,12 @@
       cursor: pointer; transition: all 0.15s; margin-left: auto;
     }
     .btn-clear-all:hover { background: #2a1414; border-color: #ff5566; }
+    .btn-update-profile {
+      background: #0e1e2e; color: #44aaff; border: 1px solid #1e3a5a;
+      border-radius: 7px; padding: 7px 14px; font-size: 12px; font-weight: 600;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .btn-update-profile:hover { background: #122840; border-color: #44aaff; }
 
     .learned-grid {
       display: grid;
@@ -402,6 +408,7 @@
 
       <div class="learned-toolbar">
         <button class="btn-fill-ai" id="btn-fill-ai">🤖 Fill All with AI</button>
+        <button class="btn-update-profile" id="btn-update-profile">⬆️ Update Profile with Answers</button>
         <button class="btn-clear-all" id="btn-clear-all-learned">🗑 Clear All</button>
       </div>
       <div class="status-msg" id="ai-fill-status"></div>
