@@ -276,6 +276,7 @@
     <div class="topbar-title">Extension Settings</div>
     <div class="topbar-tabs">
       <button class="topbar-tab active" data-tab="settings">⚙️ Settings</button>
+      <button class="topbar-tab" data-tab="answers">📝 Answers <span id="answers-count" class="app-badge"></span></button>
       <button class="topbar-tab" data-tab="applications">📋 Applications <span id="app-count" class="app-badge"></span></button>
     </div>
   </div>
@@ -468,6 +469,23 @@
   </div>
 
 </div><!-- /page -->
+
+<!-- ── ANSWERS TAB ──────────────────────────────────────────────────── -->
+<div class="page" id="tab-answers" style="display:none;">
+  <div class="card">
+    <div class="card-title" style="margin-bottom:16px;">
+      <span>📝 Saved Answers</span>
+      <div style="display:flex;gap:8px;">
+        <input type="text" id="answers-search" placeholder="Search question..." style="width:240px;font-size:12px;padding:6px 10px;" />
+        <button id="btn-clear-answers" style="background:none;color:#ff5566;border:1px solid #3a1e1e;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;">🗑 Clear All</button>
+      </div>
+    </div>
+    <p style="font-size:11px;color:#555;margin-bottom:14px;">All questions you've answered — edit any answer and click Save to update. Used automatically on future forms.</p>
+    <div id="answers-list">
+      <div class="no-learned">No answered questions yet. Run autofill → Update Profile with Answers to populate this list.</div>
+    </div>
+  </div>
+</div>
 
 <!-- ── APPLICATIONS TAB ────────────────────────────────────────────── -->
 <div class="page" id="tab-applications" style="display:none;">

@@ -161,7 +161,8 @@ async function isAlreadyApplied() {
   const norm = normalizeJobUrl(location.href);
   return new Promise(resolve => {
     chrome.storage.local.get({ applicationLog: [] }, d => {
-      const dup = d.applicationLog.some(a => a.normalizedUrl === norm);
+      // Only warn for successfully submitted applications, not failed attempts
+      const dup = d.applicationLog.some(a => a.normalizedUrl === norm && a.status === 'applied');
       resolve(dup);
     });
   });
@@ -206,19 +207,40 @@ async function clickApplyButton() {
 }
 
 async function clickSubmitButton() {
-  const RE = /\b(submit|submit application|send application|next|continue|save and continue)\b/i;
-  // Native submit first
-  const native = document.querySelector('button[type="submit"], input[type="submit"]');
-  if (native && native.offsetParent && !native.disabled) { native.click(); return true; }
-  // Text-matching fallback
-  const btn = Array.from(document.querySelectorAll('button, [role="button"]'))
-    .filter(el => el.offsetParent && !el.disabled && RE.test(el.textContent.trim()))
-    .sort((a, b) => {
-      // Prefer buttons closer to the bottom of the page
-      const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
-      return rb.top - ra.top;
-    })[0];
-  if (btn) { btn.click(); return true; }
+  const RE = /\b(submit|submit application|send application|next|continue|save and continue|apply now)\b/i;
+
+  // Strategy 1: native type="submit"
+  const natives = Array.from(document.querySelectorAll('button[type="submit"], input[type="submit"]'))
+    .filter(el => el.offsetParent && !el.disabled);
+  if (natives.length) {
+    natives[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
+    await sleep(300);
+    natives[0].click();
+    return true;
+  }
+
+  // Strategy 2: text-matching button, prefer lowest on page (closest to submit)
+  const byText = Array.from(document.querySelectorAll('button, [role="button"], a[type="submit"]'))
+    .filter(el => el.offsetParent && !el.disabled && RE.test((el.textContent || el.value || '').trim()))
+    .sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
+  if (byText.length) {
+    byText[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
+    await sleep(300);
+    byText[0].click();
+    return true;
+  }
+
+  // Strategy 3: last button inside a <form>
+  const formBtns = Array.from(document.querySelectorAll('form button:not([type="reset"]):not([type="button"])'))
+    .filter(el => el.offsetParent && !el.disabled);
+  if (formBtns.length) {
+    const last = formBtns[formBtns.length - 1];
+    last.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    await sleep(300);
+    last.click();
+    return true;
+  }
+
   return false;
 }
 
@@ -312,12 +334,15 @@ async function handleAutofillClick() {
   const unmapped = [];
   let   filled   = 0;
 
-  // Pre-pass: auto-check mandatory consent/agreement checkboxes
+  // Pre-pass: auto-check mandatory consent/agreement checkboxes only
   const CONSENT_RE = /\b(agree|consent|certif|acknowledg|confirm|accept|authorize|authoris|attest|declare|understand|warrant)\b|terms|privacy.?polic|background.?check/i;
   for (const field of fields) {
     if (field.type !== 'checkbox') continue;
-    if (!isRequiredField(field)) continue;            // only mandatory
-    if (!CONSENT_RE.test(field.label || '')) continue; // only consent-flavoured
+    if (!isRequiredField(field)) continue; // mandatory only
+    // Check label AND full surrounding text (label may not be extracted for nested checkboxes)
+    const surrounding = field.el?.closest('label, .field, .form-group, li')?.innerText || '';
+    const text = (field.label || '') + ' ' + surrounding;
+    if (!CONSENT_RE.test(text)) continue;
     fillCheckbox(field.el, 'yes');
     filled++;
   }

@@ -58,10 +58,15 @@ document.querySelectorAll('.topbar-tab').forEach(btn => {
     document.querySelectorAll('.topbar-tab').forEach(t => t.classList.remove('active'));
     btn.classList.add('active');
     const tab = btn.dataset.tab;
-    document.getElementById('tab-applications').style.display = tab === 'applications' ? 'block' : 'none';
-    document.querySelector('.page:not(#tab-applications)').style.display = tab === 'settings' ? '' : 'none';
+    // Hide all tab panels
+    document.getElementById('tab-applications').style.display = 'none';
+    document.getElementById('tab-answers').style.display      = 'none';
+    document.querySelector('.page:not(#tab-applications):not(#tab-answers)').style.display = 'none';
+    // Show selected
+    if (tab === 'applications') { document.getElementById('tab-applications').style.display = 'block'; loadApplicationLog(); }
+    else if (tab === 'answers') { document.getElementById('tab-answers').style.display = 'block'; loadAnswersTab(); }
+    else document.querySelector('.page:not(#tab-applications):not(#tab-answers)').style.display = '';
     document.getElementById('btn-save').style.display = tab === 'settings' ? '' : 'none';
-    if (tab === 'applications') loadApplicationLog();
   });
 });
 
@@ -650,6 +655,117 @@ $('btn-save').addEventListener('click', () => {
     renderLearnedFields(learnedAnswers);
     renderExtendedProfile(resumeData);
   });
+});
+
+// ── ANSWERS TAB ───────────────────────────────────────────────────────────────
+function loadAnswersTab() {
+  chrome.storage.local.get({ resumeData: {}, learnedAnswers: {} }, d => {
+    const standard = new Set(RESUME_FIELDS);
+    // Collect answered entries: extended profile (label-keyed resumeData) + answered learnedAnswers
+    const answers = {};
+
+    // From resumeData — non-standard keys are label-keyed answers
+    Object.entries(d.resumeData || {}).forEach(([k, v]) => {
+      if (!standard.has(k) && k.length > 3 && v) answers[k] = v;
+    });
+
+    // From learnedAnswers — only answered ones
+    Object.entries(d.learnedAnswers || {}).forEach(([label, val]) => {
+      const answer = typeof val === 'string' ? val : val?.answer;
+      if (answer) answers[label] = answer;
+    });
+
+    renderAnswersTab(answers);
+    const badge = $('answers-count');
+    if (badge) badge.textContent = Object.keys(answers).length || '';
+  });
+}
+
+function renderAnswersTab(answers) {
+  const list   = $('answers-list');
+  const search = ($('answers-search')?.value || '').toLowerCase();
+  const entries = Object.entries(answers).filter(([k]) =>
+    !search || k.toLowerCase().includes(search)
+  );
+
+  if (!entries.length) {
+    list.innerHTML = `<div class="no-learned">${Object.keys(answers).length ? 'No matching answers.' : 'No answered questions yet.'}</div>`;
+    return;
+  }
+
+  list.innerHTML = entries.map(([label, answer]) => `
+    <div class="learned-field" style="margin-bottom:10px;">
+      <div class="learned-field-label" style="display:flex;justify-content:space-between;align-items:flex-start;">
+        <span class="learned-field-label-text">${escHtml(label)}</span>
+        <button class="btn-clear-learned" data-label="${escHtml(label)}" title="Delete">✕</button>
+      </div>
+      <textarea class="answer-edit" data-label="${escHtml(label)}" rows="2"
+        style="font-size:12px;min-height:50px;">${escHtml(answer)}</textarea>
+    </div>
+  `).join('');
+
+  // Delete individual answer
+  list.querySelectorAll('.btn-clear-learned').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const lbl = btn.dataset.label;
+      chrome.storage.local.get({ resumeData: {}, learnedAnswers: {} }, d => {
+        delete d.resumeData[lbl];
+        if (d.learnedAnswers[lbl]) {
+          if (typeof d.learnedAnswers[lbl] === 'object') d.learnedAnswers[lbl].answer = '';
+          else delete d.learnedAnswers[lbl];
+        }
+        chrome.storage.local.set({ resumeData: d.resumeData, learnedAnswers: d.learnedAnswers }, loadAnswersTab);
+      });
+    });
+  });
+}
+
+// Save edited answers from the Answers tab
+$('btn-clear-answers')?.addEventListener('click', () => {
+  if (!confirm('Clear all saved answers?')) return;
+  chrome.storage.local.get({ resumeData: {}, learnedAnswers: {} }, d => {
+    const standard = new Set(RESUME_FIELDS);
+    // Remove non-standard keys from resumeData
+    Object.keys(d.resumeData).forEach(k => { if (!standard.has(k)) delete d.resumeData[k]; });
+    // Clear all learnedAnswers answers
+    Object.keys(d.learnedAnswers).forEach(k => {
+      if (typeof d.learnedAnswers[k] === 'object') d.learnedAnswers[k].answer = '';
+      else delete d.learnedAnswers[k];
+    });
+    chrome.storage.local.set({ resumeData: d.resumeData, learnedAnswers: d.learnedAnswers }, loadAnswersTab);
+  });
+});
+
+$('answers-search')?.addEventListener('input', loadAnswersTab);
+
+// Save button inside Answers tab — persist edits from textareas
+document.addEventListener('click', e => {
+  if (!e.target.matches('#btn-save')) return;
+  // Save any edits made in the answers tab textareas
+  const edits = document.querySelectorAll('.answer-edit');
+  if (!edits.length) return;
+  chrome.storage.local.get({ resumeData: {}, learnedAnswers: {} }, d => {
+    edits.forEach(ta => {
+      const lbl = ta.dataset.label;
+      const val = ta.value.trim();
+      if (!lbl) return;
+      d.resumeData[lbl] = val;
+      if (d.learnedAnswers[lbl]) {
+        if (typeof d.learnedAnswers[lbl] === 'object') d.learnedAnswers[lbl].answer = val;
+        else d.learnedAnswers[lbl] = val;
+      }
+    });
+    chrome.storage.local.set({ resumeData: d.resumeData, learnedAnswers: d.learnedAnswers });
+  });
+});
+
+// Load badge on page open
+chrome.storage.local.get({ resumeData: {}, learnedAnswers: {} }, d => {
+  const standard = new Set(RESUME_FIELDS);
+  let count = Object.keys(d.resumeData).filter(k => !standard.has(k) && k.length > 3 && d.resumeData[k]).length;
+  count += Object.values(d.learnedAnswers).filter(v => typeof v === 'string' ? v : v?.answer).length;
+  const badge = $('answers-count');
+  if (badge && count) badge.textContent = count;
 });
 
 // ── APPLICATION LOG ────────────────────────────────────────────────────────────
