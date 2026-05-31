@@ -287,6 +287,26 @@ function scanAllFields() {
     fields.push({ el, type, name: el.name || el.id, label: getLabel(el) });
   });
 
+  // ── Custom / ARIA comboboxes (non-native selects) ─────────────────────────
+  // Covers Greenhouse, Lever, Workday, React-Select, and any role="combobox"
+  const comboSelectors = [
+    '[role="combobox"]',
+    '[aria-haspopup="listbox"]',
+    '[aria-haspopup="true"]',
+  ];
+  document.querySelectorAll(comboSelectors.join(',')).forEach(el => {
+    if (seen.has(el)) return;
+    if (!el.offsetParent) return;
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') return;
+    seen.add(el);
+    fields.push({
+      el,
+      type:  'combobox',
+      name:  el.name || el.id || el.getAttribute('aria-label') || '',
+      label: getLabel(el),
+    });
+  });
+
   return fields;
 }
 
@@ -519,10 +539,11 @@ function mapSelectableFromResume(field, r, ctx) {
 async function fillField(field, value) {
   try {
     switch (field.type) {
-      case 'radio':    return fillRadio(field, value);
-      case 'select':   return fillSelect(field.el, value);
-      case 'checkbox': return fillCheckbox(field.el, value);
-      case 'file':     return false; // can't programmatically set file inputs
+      case 'radio':     return fillRadio(field, value);
+      case 'select':    return fillSelect(field.el, value);
+      case 'combobox':  return fillCombobox(field, value);
+      case 'checkbox':  return fillCheckbox(field.el, value);
+      case 'file':      return false;
       case 'textarea':
       case 'text':
       case 'email':
@@ -563,6 +584,117 @@ function fillSelect(el, value) {
   el.dispatchEvent(new Event('blur',   { bubbles: true }));
   el.classList.add('ot-filled');
   return true;
+}
+
+// ── COUNTRY ALIAS MAP ─────────────────────────────────────────────────────────
+// Maps any stored country value to the canonical text most forms show.
+const COUNTRY_ALIASES = {
+  'united states': ['united states', 'united states of america', 'usa', 'us'],
+  'canada':        ['canada', 'ca'],
+  'united kingdom':['united kingdom', 'uk', 'great britain', 'gb', 'england'],
+  'australia':     ['australia', 'au'],
+  'india':         ['india', 'in'],
+  'germany':       ['germany', 'de', 'deutschland'],
+  'france':        ['france', 'fr'],
+  'singapore':     ['singapore', 'sg'],
+  'ireland':       ['ireland', 'ie'],
+  'netherlands':   ['netherlands', 'nl', 'holland'],
+  'new zealand':   ['new zealand', 'nz'],
+  'brazil':        ['brazil', 'br', 'brasil'],
+  'mexico':        ['mexico', 'mx', 'méxico'],
+  'japan':         ['japan', 'jp'],
+  'china':         ['china', 'cn'],
+  'south korea':   ['south korea', 'kr', 'korea'],
+};
+
+function normaliseCountry(raw) {
+  const lower = (raw || '').toLowerCase().trim();
+  for (const [canonical, aliases] of Object.entries(COUNTRY_ALIASES)) {
+    if (aliases.includes(lower)) return canonical;
+  }
+  return lower; // pass through as-is for unlisted countries
+}
+
+// ── CUSTOM COMBOBOX FILLER ────────────────────────────────────────────────────
+async function fillCombobox(field, value) {
+  const el = field.el;
+
+  // Normalise country values before trying to match
+  const isCountry = /country|nation/i.test(field.label + field.name);
+  const searchVal = isCountry ? normaliseCountry(value) : value.toLowerCase();
+
+  // Step 1: open the dropdown
+  el.focus();
+  el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  el.click();
+  await sleep(200);
+
+  // Step 2: type to filter options
+  triggerReactSetter(el, 'value', value);
+  el.value = value;
+  el.dispatchEvent(new Event('input',   { bubbles: true }));
+  el.dispatchEvent(new Event('change',  { bubbles: true }));
+  el.dispatchEvent(new KeyboardEvent('keydown', { key: value[0], bubbles: true }));
+  await sleep(400); // wait for options to render
+
+  // Step 3: find matching option in any visible listbox
+  let matched = findDropdownOption(searchVal);
+
+  // Step 4: if no match yet, try clearing and retyping just first word
+  if (!matched) {
+    const firstWord = value.split(/\s+/)[0];
+    triggerReactSetter(el, 'value', firstWord);
+    el.value = firstWord;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(350);
+    matched = findDropdownOption(searchVal);
+  }
+
+  if (!matched) return false;
+
+  // Step 5: click the matched option
+  matched.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  matched.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true }));
+  matched.click();
+  await sleep(150);
+
+  el.classList.add('ot-filled');
+  return true;
+}
+
+function findDropdownOption(searchVal) {
+  // All common option selectors across ATS platforms
+  const OPTION_SELECTORS = [
+    '[role="option"]',
+    '[role="listbox"] li',
+    '[role="listbox"] [role="option"]',
+    '.select__option',
+    '.Select__option',
+    '[class*="option--"]',
+    '[class*="__option"]',
+    '[class*="dropdown-item"]',
+    '[class*="menu-item"]',
+    '[class*="list-item"]',
+    'li[class*="select"]',
+    'li[class*="result"]',
+  ];
+
+  const lower = searchVal.toLowerCase();
+
+  for (const selector of OPTION_SELECTORS) {
+    const options = Array.from(document.querySelectorAll(selector))
+      .filter(o => o.offsetParent !== null); // visible only
+    if (!options.length) continue;
+
+    // Exact text match first
+    const exact = options.find(o => o.textContent.trim().toLowerCase() === lower);
+    if (exact) return exact;
+
+    // Contains match
+    const contains = options.find(o => o.textContent.trim().toLowerCase().includes(lower));
+    if (contains) return contains;
+  }
+  return null;
 }
 
 // Trigger React's internal synthetic event system so React-controlled
@@ -639,16 +771,20 @@ function highlightFileInput(el) {
 
 // ── VALIDATION ────────────────────────────────────────────────────────────────
 function requiresValidation(field) {
-  return field.type === 'radio' || field.type === 'select';
+  return field.type === 'radio' || field.type === 'select' || field.type === 'combobox';
 }
 
 function validateSelectableField(field) {
   if (field.type === 'radio') {
-    const name = field.name;
-    return !!document.querySelector(`input[type="radio"][name="${name}"]:checked`);
+    return !!document.querySelector(`input[type="radio"][name="${field.name}"]:checked`);
   }
   if (field.type === 'select') {
     return field.el.value !== '' && field.el.selectedIndex > 0;
+  }
+  if (field.type === 'combobox') {
+    const val = (field.el?.value || '').trim();
+    // Consider filled if the input has a value and no error indicators nearby
+    return val.length > 0 && !field.el?.getAttribute('aria-invalid');
   }
   return true;
 }
@@ -656,6 +792,7 @@ function validateSelectableField(field) {
 function isFieldFilled(field) {
   if (field.type === 'radio')    return validateSelectableField(field);
   if (field.type === 'select')   return validateSelectableField(field);
+  if (field.type === 'combobox') return (field.el?.value || '').trim().length > 0;
   if (field.type === 'checkbox') return true;
   if (field.type === 'file')     return true;
   return (field.el?.value || '').trim().length > 0;
