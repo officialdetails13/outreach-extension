@@ -95,6 +95,25 @@ function setOverlayState(state) {
   }
 }
 
+// ── MANDATORY FIELD CHECK ─────────────────────────────────────────────────────
+// Optional/voluntary fields are never auto-filled unless the user has explicitly
+// set a value for them. Prevents EEO, diversity, and voluntary fields from being
+// touched by guessing or Claude.
+const OPTIONAL_LABEL_RE = /voluntary|optional|\(optional\)|prefer.?not|gender|pronouns|race|ethnicity|disability|veteran|eeo|equal.?opportun|diversity/i;
+
+function isRequiredField(field) {
+  const el = field.el;
+  if (!el) return true; // assume required if we can't check
+  if (el.required || el.getAttribute('aria-required') === 'true') return true;
+  // Check if the label contains a required indicator (*, ✱, "required")
+  const label = (field.label || '').toLowerCase();
+  if (/\*|required/.test(label)) return true;
+  // Explicitly optional/voluntary → not required
+  if (OPTIONAL_LABEL_RE.test(label)) return false;
+  // No explicit required marker → treat as required (most form fields are)
+  return true;
+}
+
 // ── MAIN AUTOFILL HANDLER ─────────────────────────────────────────────────────
 async function handleAutofillClick() {
   setOverlayState('loading');
@@ -134,7 +153,8 @@ async function handleAutofillClick() {
         unmapped.push(field);
       }
     } else {
-      unmapped.push(field);
+      // Only queue optional fields for further passes if user has explicit answer
+      if (isRequiredField(field)) unmapped.push(field);
     }
     await sleep(30);
   }
@@ -151,16 +171,18 @@ async function handleAutofillClick() {
         filled++;
         if (requiresValidation(field)) validateSelectableField(field);
       } else {
-        stillUnmapped.push(field);
+        if (isRequiredField(field)) stillUnmapped.push(field);
       }
     } else {
-      stillUnmapped.push(field);
+      if (isRequiredField(field)) stillUnmapped.push(field);
     }
     await sleep(30);
   }
 
-  // Pass 3: Claude for anything still unmapped (only if enabled)
-  const claudeFields = stillUnmapped.filter(f => f.type !== 'file' && f.type !== 'checkbox');
+  // Pass 3: Claude only for REQUIRED fields still unmapped
+  const claudeFields = stillUnmapped.filter(f =>
+    f.type !== 'file' && f.type !== 'checkbox' && isRequiredField(f)
+  );
   if (claudeFields.length && claudeEnabled && claudeApiKey) {
     setOverlayState('claude');
     try {
