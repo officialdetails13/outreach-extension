@@ -95,25 +95,51 @@ function renderLearnedFields(learned) {
     return;
   }
 
-  const unanswered = entries.filter(([, v]) => !v).length;
-  if (unanswered > 0) {
-    badge.textContent    = unanswered + ' new';
-    badge.style.display  = 'inline-block';
-  } else {
-    badge.style.display  = 'none';
-  }
+  // Normalise: support both old string format and new {answer,type,options} format
+  const normalised = entries.map(([label, val]) => {
+    if (typeof val === 'string') return { label, answer: val, type: 'textarea', options: [] };
+    return { label, answer: val.answer || '', type: val.type || 'textarea', options: val.options || [] };
+  });
 
-  container.innerHTML = entries.map(([label, answer]) => `
-    <div class="learned-field">
+  const unanswered = normalised.filter(e => !e.answer).length;
+  badge.textContent   = unanswered ? unanswered + ' new' : '';
+  badge.style.display = unanswered ? 'inline-block' : 'none';
+
+  container.innerHTML = normalised.map(({ label, answer, type, options }) => {
+    const labelHtml = `
       <div class="learned-field-label">
         ${escHtml(label)}
         ${!answer ? '<span class="badge-new">needs answer</span>' : ''}
-        <button class="btn-clear-learned" data-label="${escHtml(label)}" title="Remove this field">✕</button>
-      </div>
-      <textarea class="learned-answer" data-label="${escHtml(label)}" placeholder="Type your answer here...">${escHtml(answer)}</textarea>
-      <div class="learned-field-meta">Saved answer — used automatically on future forms</div>
-    </div>
-  `).join('');
+        <button class="btn-clear-learned" data-label="${escHtml(label)}" title="Remove">✕</button>
+      </div>`;
+
+    let inputHtml = '';
+
+    if ((type === 'select') && options.length) {
+      inputHtml = `<select class="learned-answer" data-label="${escHtml(label)}">
+        <option value="">Select an answer...</option>
+        ${options.map(o => `<option value="${escHtml(o)}" ${answer === o ? 'selected' : ''}>${escHtml(o)}</option>`).join('')}
+      </select>`;
+    } else if ((type === 'radio') && options.length) {
+      inputHtml = `<div class="learned-radio-group">
+        ${options.map(o => `
+          <label class="learned-radio-item">
+            <input type="radio" class="learned-answer" name="lr_${escHtml(label).replace(/\s/g,'_')}" data-label="${escHtml(label)}" value="${escHtml(o)}" ${answer === o ? 'checked' : ''} />
+            <span>${escHtml(o)}</span>
+          </label>`).join('')}
+      </div>`;
+    } else {
+      // text / textarea / unknown
+      const isLong = type === 'textarea' || (answer && answer.length > 80);
+      if (isLong) {
+        inputHtml = `<textarea class="learned-answer" data-label="${escHtml(label)}" placeholder="Type your answer...">${escHtml(answer)}</textarea>`;
+      } else {
+        inputHtml = `<input type="text" class="learned-answer" data-label="${escHtml(label)}" placeholder="Type your answer..." value="${escHtml(answer)}" />`;
+      }
+    }
+
+    return `<div class="learned-field">${labelHtml}${inputHtml}<div class="learned-field-meta">Used automatically on future forms</div></div>`;
+  }).join('');
 
   // Remove individual field
   container.querySelectorAll('.btn-clear-learned').forEach(btn => {
@@ -252,10 +278,21 @@ $('btn-save').addEventListener('click', () => {
     if (el) resumeData[f] = el.value;
   });
 
-  // Collect learned answers from textareas
+  // Collect learned answers — handle textarea, input, select, and radio
   const learnedAnswers = {};
-  document.querySelectorAll('.learned-answer').forEach(ta => {
-    if (ta.dataset.label) learnedAnswers[ta.dataset.label] = ta.value.trim();
+  const seen = new Set();
+  document.querySelectorAll('.learned-answer').forEach(el => {
+    const lbl = el.dataset.label;
+    if (!lbl || seen.has(lbl)) return;
+    if (el.type === 'radio') {
+      // Collect all radios for this group; only mark seen after processing all
+      const checked = document.querySelector(`.learned-answer[data-label="${CSS.escape(lbl)}"]:checked`);
+      learnedAnswers[lbl] = checked ? { answer: checked.value, type: 'radio', options: Array.from(document.querySelectorAll(`.learned-answer[data-label="${CSS.escape(lbl)}"]`)).map(r => r.value) } : { answer: '', type: 'radio', options: [] };
+      seen.add(lbl);
+    } else {
+      learnedAnswers[lbl] = { answer: el.value.trim(), type: el.tagName === 'SELECT' ? 'select' : el.tagName === 'TEXTAREA' ? 'textarea' : 'text', options: el.tagName === 'SELECT' ? Array.from(el.options).filter(o=>o.value).map(o=>o.text) : [] };
+      seen.add(lbl);
+    }
   });
 
   const claudeApiKey = $('claudeApiKey').value.trim();

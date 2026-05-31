@@ -122,8 +122,9 @@ async function handleAutofillClick() {
   // Pass 2: check learned answers (user-supplied answers from previous runs)
   const stillUnmapped = [];
   for (const field of unmapped) {
-    const key    = (field.label || field.name || '').trim();
-    const answer = learnedAnswers[key];
+    const key   = (field.label || field.name || '').trim();
+    const entry = learnedAnswers[key];
+    const answer = entry && (typeof entry === 'string' ? entry : entry.answer);
     if (answer) {
       const ok = await fillField(field, answer);
       if (ok) {
@@ -245,21 +246,20 @@ function getLabel(el) {
   // 1. <label for="id">
   if (el.id) {
     const lbl = document.querySelector(`label[for="${el.id}"]`);
-    if (lbl) return lbl.innerText.replace(/\*/g, '').trim();
+    if (lbl) return lbl.innerText.replace(/[*✱]/g, '').trim();
   }
-  // 2. parent label
-  const parentLabel = el.closest('label');
-  if (parentLabel) return parentLabel.innerText.replace(/\*/g, '').trim();
-  // 3. aria-label
+  // 2. aria-label
   if (el.getAttribute('aria-label')) return el.getAttribute('aria-label').trim();
-  // 4. placeholder
-  if (el.placeholder) return el.placeholder.trim();
-  // 5. nearest preceding label in form group
-  const wrap = el.closest('.field, .form-group, .form-item, [class*="field"], [class*="question"]');
+  // 3. parent <label>
+  const parentLabel = el.closest('label');
+  if (parentLabel) return parentLabel.innerText.replace(/[*✱]/g, '').trim();
+  // 4. nearest wrapper label (most reliable for modern form layouts)
+  const wrap = el.closest('.field, .form-group, .form-item, .question, fieldset, [class*="field"], [class*="group"], [class*="question"], [class*="item"]');
   if (wrap) {
-    const lbl = wrap.querySelector('label, [class*="label"], legend');
-    if (lbl) return lbl.innerText.replace(/\*/g, '').trim();
+    const lbl = wrap.querySelector('legend, label:not([for]), label');
+    if (lbl) return lbl.innerText.replace(/[*✱]/g, '').trim();
   }
+  // 5. placeholder as last resort (never use as canonical label)
   return el.name || el.id || '';
 }
 
@@ -674,7 +674,17 @@ async function saveLearnedFields(fields) {
       const updated = { ...d.learnedAnswers };
       fields.forEach(f => {
         const key = (f.label || f.name || '').trim();
-        if (key && updated[key] === undefined) updated[key] = ''; // blank = needs answer
+        if (!key) return;
+        // Only add if not already answered
+        const existing = updated[key];
+        const alreadyAnswered = existing && (typeof existing === 'string' ? existing : existing.answer);
+        if (!alreadyAnswered) {
+          updated[key] = {
+            answer:  '',
+            type:    f.type || 'text',
+            options: (f.options || []).map(o => o.text || o.value || o),
+          };
+        }
       });
       chrome.storage.local.set({ learnedAnswers: updated }, resolve);
     });

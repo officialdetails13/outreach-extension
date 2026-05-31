@@ -120,6 +120,15 @@
     }
     .btn-fill-ai:hover { background: #2a1a4a; border-color: #7c4dff; }
     .btn-fill-ai:disabled { opacity: 0.5; cursor: not-allowed; }
+    .learned-radio-group { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+    .learned-radio-item {
+      display: flex; align-items: center; gap: 6px;
+      background: #12121e; border: 1px solid #2a2a3a; border-radius: 5px;
+      padding: 6px 10px; cursor: pointer; font-size: 12px; color: #ccc;
+    }
+    .learned-radio-item:has(input:checked) { border-color: #7c4dff; color: #c8b4ff; background: #1a1230; }
+    .learned-radio-item input[type="radio"] { accent-color: #7c4dff; }
+    .learned-field select { margin-top: 4px; }
   </style>
 </head>
 <body>
