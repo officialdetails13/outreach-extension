@@ -262,6 +262,22 @@ async function captureValidationErrors() {
   return errorFields;
 }
 
+function highlightFailedFields(errorFields) {
+  errorFields.forEach(({ el }) => {
+    if (!el) return;
+    el.style.outline      = '2.5px solid #ff5566';
+    el.style.outlineOffset = '2px';
+    // Clear the highlight when the user interacts with the field
+    const clear = () => {
+      el.style.outline = '';
+      el.style.outlineOffset = '';
+    };
+    el.addEventListener('input',  clear, { once: true });
+    el.addEventListener('change', clear, { once: true });
+    el.addEventListener('focus',  clear, { once: true });
+  });
+}
+
 // ── MAIN AUTOFILL HANDLER ─────────────────────────────────────────────────────
 async function handleAutofillClick() {
   setOverlayState('loading');
@@ -296,8 +312,19 @@ async function handleAutofillClick() {
   const unmapped = [];
   let   filled   = 0;
 
+  // Pre-pass: auto-check mandatory consent/agreement checkboxes
+  const CONSENT_RE = /\b(agree|consent|certif|acknowledg|confirm|accept|authorize|authoris|attest|declare|understand|warrant)\b|terms|privacy.?polic|background.?check/i;
+  for (const field of fields) {
+    if (field.type !== 'checkbox') continue;
+    if (!isRequiredField(field)) continue;            // only mandatory
+    if (!CONSENT_RE.test(field.label || '')) continue; // only consent-flavoured
+    fillCheckbox(field.el, 'yes');
+    filled++;
+  }
+
   // Pass 1: fill from resume profile data
   for (const field of fields) {
+    if (field.type === 'checkbox') continue; // already handled above
     // File inputs — whitelist: only fill inputs explicitly labeled resume/CV.
     // Everything else (cover letter, portfolio, other docs) is left untouched.
     if (field.type === 'file') {
@@ -395,10 +422,11 @@ async function handleAutofillClick() {
   if (submitted) {
     const errorFields = await captureValidationErrors();
     if (errorFields.length) {
+      highlightFailedFields(errorFields);
       await saveLearnedFields(errorFields);
       await logApplication('failed');
       setOverlayState('error');
-      showToast(`⚠️ ${errorFields.length} field${errorFields.length !== 1 ? 's' : ''} failed — saved to Needs Answers. Fix & re-run.`, 'warn');
+      showToast(`⚠️ ${errorFields.length} field${errorFields.length !== 1 ? 's' : ''} failed — highlighted in red. Saved to Needs Answers.`, 'warn');
     } else {
       await logApplication('applied');
       setOverlayState('done');
