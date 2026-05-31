@@ -95,6 +95,9 @@ chrome.storage.local.get(['resumeData', 'claudeApiKey', 'claudeEnabled', 'resume
 
   // Learned answers
   renderLearnedFields(d.learnedAnswers || {});
+
+  // Extended profile (label-keyed entries in resumeData)
+  renderExtendedProfile(d.resumeData || {});
 });
 
 // ── RESUME FILE UPLOAD ────────────────────────────────────────────────────────
@@ -373,6 +376,26 @@ Respond ONLY with this exact JSON structure:
   });
 });
 
+// ── EXTENDED PROFILE ──────────────────────────────────────────────────────────
+function renderExtendedProfile(resumeData) {
+  const section  = $('extended-profile-section');
+  const list     = $('extended-profile-list');
+  // Keys that are standard profile fields — don't show them again here
+  const standard = new Set(RESUME_FIELDS);
+
+  const extended = Object.entries(resumeData).filter(([k]) => !standard.has(k) && k.length > 3);
+  if (!extended.length) { section.style.display = 'none'; return; }
+
+  section.style.display = 'block';
+  list.innerHTML = extended.map(([label, answer]) => `
+    <div class="field" style="margin-bottom:10px;">
+      <label style="font-size:11px;color:#888;font-weight:600;text-transform:none;letter-spacing:0;margin-bottom:3px;">${escHtml(label)}</label>
+      <input type="text" class="extended-answer" data-label="${escHtml(label)}"
+             value="${escHtml(answer)}" placeholder="Answer..." />
+    </div>
+  `).join('');
+}
+
 function showStatus(el, msg, type = 'info', autohide = 0) {
   el.textContent = msg;
   el.className = `status-msg ${type} show`;
@@ -536,6 +559,7 @@ $('btn-update-profile').addEventListener('click', () => {
 
     chrome.storage.local.set({ resumeData, learnedAnswers: remaining }, () => {
       renderLearnedFields(remaining);
+      renderExtendedProfile(resumeData);   // show newly added entries
       showStatus(
         status,
         saved
@@ -550,11 +574,18 @@ $('btn-update-profile').addEventListener('click', () => {
 
 // ── SAVE ──────────────────────────────────────────────────────────────────────
 $('btn-save').addEventListener('click', () => {
-  // Profile data
+  // Profile data (named fields)
   const resumeData = {};
   RESUME_FIELDS.forEach(f => {
     const el = $(f);
     if (el) resumeData[f] = el.value;
+  });
+
+  // Extended profile answers (label-keyed entries visible in the editable section)
+  document.querySelectorAll('.extended-answer').forEach(el => {
+    if (el.dataset.label && el.value.trim()) {
+      resumeData[el.dataset.label] = el.value.trim();
+    }
   });
 
   // Collect learned answers — handle textarea, input, select, and radio
@@ -604,5 +635,6 @@ $('btn-save').addEventListener('click', () => {
     toast.classList.add('show');
     setTimeout(() => toast.classList.remove('show'), 2000);
     renderLearnedFields(learnedAnswers);
+    renderExtendedProfile(resumeData);
   });
 });
