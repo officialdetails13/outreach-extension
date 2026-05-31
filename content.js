@@ -96,22 +96,32 @@ function setOverlayState(state) {
 }
 
 // ── MANDATORY FIELD CHECK ─────────────────────────────────────────────────────
-// Optional/voluntary fields are never auto-filled unless the user has explicitly
-// set a value for them. Prevents EEO, diversity, and voluntary fields from being
-// touched by guessing or Claude.
-const OPTIONAL_LABEL_RE = /voluntary|optional|\(optional\)|prefer.?not|gender|pronouns|race|ethnicity|disability|veteran|eeo|equal.?opportun|diversity/i;
-
+// A field is required only when the form itself says so — never assume based on
+// the label text. "Gender" might be mandatory on one form and voluntary on another.
 function isRequiredField(field) {
   const el = field.el;
-  if (!el) return true; // assume required if we can't check
-  if (el.required || el.getAttribute('aria-required') === 'true') return true;
-  // Check if the label contains a required indicator (*, ✱, "required")
-  const label = (field.label || '').toLowerCase();
-  if (/\*|required/.test(label)) return true;
-  // Explicitly optional/voluntary → not required
-  if (OPTIONAL_LABEL_RE.test(label)) return false;
-  // No explicit required marker → treat as required (most form fields are)
-  return true;
+  if (!el) return true;
+
+  // HTML required attribute (works for text, select, checkbox, etc.)
+  if (el.required) return true;
+
+  // ARIA
+  if (el.getAttribute('aria-required') === 'true') return true;
+
+  // For radio groups: check if any radio in the group has required
+  if (field.type === 'radio' && field.options) {
+    if (field.options.some(o => o.el?.required)) return true;
+  }
+
+  // Label contains an asterisk or the word "required" — visual indicator
+  const labelText = field.label || '';
+  if (/\*|✱|\brequired\b/i.test(labelText)) return true;
+
+  // Wrapper element has a required indicator (common in custom form libraries)
+  const wrap = el.closest('[data-required="true"], [required], .required, .is-required, [class*="required"]');
+  if (wrap && wrap !== el) return true;
+
+  return false;
 }
 
 // ── MAIN AUTOFILL HANDLER ─────────────────────────────────────────────────────
