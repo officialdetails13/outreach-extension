@@ -1,8 +1,8 @@
 // content.js — Holistic form filler with Claude AI fallback
-if (window.__OT_LOADED__) { /* already running — do nothing */ } else {
+(function () {
+if (window.__OT_LOADED__) return;
 window.__OT_LOADED__ = true;
 
-// ── VARS (must be declared before boot() is called) ───────────────────────────
 let _overlayBtn = null;
 
 // ── BOOT ──────────────────────────────────────────────────────────────────────
@@ -599,11 +599,11 @@ function debounce(fn, ms) {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// ── INIT (called last so all functions and vars are defined first) ─────────────
+// ── INIT ──────────────────────────────────────────────────────────────────────
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', boot);
 } else {
   boot();
 }
 
-} // end guard block
+})(); // end IIFE guard
