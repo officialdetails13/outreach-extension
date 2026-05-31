@@ -10,6 +10,7 @@
     "tabs"
   ],
   "host_permissions": [
+    "https://outreach-tracker-j73i.onrender.com/*",
     "https://*.linkedin.com/*",
     "https://*.indeed.com/*",
     "https://*.greenhouse.io/*",
