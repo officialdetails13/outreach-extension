@@ -242,33 +242,60 @@ function getFieldType(el) {
 }
 
 // ── LABEL EXTRACTION ──────────────────────────────────────────────────────────
+function cleanLabelText(text) {
+  return (text || '').replace(/[*✱]/g, '').replace(/\s+/g, ' ').trim();
+}
+
 function getLabel(el) {
-  // 1. <label for="id">
+  // 1. Explicit <label for="id">
   if (el.id) {
-    const lbl = document.querySelector(`label[for="${el.id}"]`);
-    if (lbl) return lbl.innerText.replace(/[*✱]/g, '').trim();
+    const explicit = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+    if (explicit) return cleanLabelText(explicit.innerText);
   }
-  // 2. aria-label
-  if (el.getAttribute('aria-label')) return el.getAttribute('aria-label').trim();
-  // 3. parent <label>
-  const parentLabel = el.closest('label');
-  if (parentLabel) return parentLabel.innerText.replace(/[*✱]/g, '').trim();
-  // 4. nearest wrapper label (most reliable for modern form layouts)
-  const wrap = el.closest('.field, .form-group, .form-item, .question, fieldset, [class*="field"], [class*="group"], [class*="question"], [class*="item"]');
-  if (wrap) {
-    const lbl = wrap.querySelector('legend, label:not([for]), label');
-    if (lbl) return lbl.innerText.replace(/[*✱]/g, '').trim();
+
+  // 2. aria-label / aria-labelledby
+  const ariaLabel = el.getAttribute('aria-label');
+  if (ariaLabel) return ariaLabel.trim();
+  const ariaBy = el.getAttribute('aria-labelledby');
+  if (ariaBy) {
+    const ref = document.getElementById(ariaBy);
+    if (ref) return cleanLabelText(ref.innerText);
   }
-  // 5. placeholder as last resort (never use as canonical label)
+
+  // 3. Walk up the DOM, look for a DIRECT CHILD label/legend of each ancestor
+  //    Skip labels that themselves wrap an input (option-item pattern)
+  let node = el.parentElement;
+  while (node && node !== document.body) {
+    // Check direct children only (:scope >) so we don't grab nested option labels
+    const candidates = node.querySelectorAll(':scope > label, :scope > legend');
+    for (const c of candidates) {
+      if (c.querySelector('input, select, textarea')) continue; // skip option-item wrappers
+      const text = cleanLabelText(c.innerText);
+      if (text) return text;
+    }
+    // Stop searching at common form-group boundaries
+    if (node.matches('form, fieldset, [role="group"]') ||
+        /\b(field|form.?group|form.?item|question|card|section)\b/i.test(node.className || '')) break;
+    node = node.parentElement;
+  }
+
+  // 4. Fall back to name/id (never use placeholder — it's example data, not a label)
   return el.name || el.id || '';
 }
 
 function getGroupLabel(radioGroup) {
-  // Look for a fieldset legend or wrapper label above the group
-  const wrap = radioGroup[0]?.closest('fieldset, [class*="field"], [class*="group"], [class*="question"]');
-  if (wrap) {
-    const leg = wrap.querySelector('legend, label:not([for]), [class*="label"]');
-    if (leg) return leg.innerText.replace(/\*/g, '').trim();
+  // Same walk-up approach for radio/checkbox groups
+  let node = radioGroup[0]?.parentElement;
+  while (node && node !== document.body) {
+    const candidates = node.querySelectorAll(':scope > label, :scope > legend');
+    for (const c of candidates) {
+      if (c.querySelector('input, select, textarea')) continue;
+      const text = cleanLabelText(c.innerText);
+      if (text) return text;
+    }
+    if (node.matches('form, fieldset') ||
+        /\b(field|form.?group|question|card|section)\b/i.test(node.className || '')) break;
+    node = node.parentElement;
   }
   return '';
 }
