@@ -326,3 +326,59 @@ input[type="text"]:focus, input[type="number"]:focus, select:focus {
 .apply-btn-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
 .center { text-align: center; }
 .hidden { display: none !important; }
+
+/* FILL CURRENT PAGE CARD */
+.current-page-card {
+  background: #12122a;
+  border: 1px solid #4a3a88;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.current-page-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #9c7dff;
+  margin-bottom: 3px;
+}
+.current-page-sub {
+  font-size: 11px;
+  color: #666;
+  margin-bottom: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.btn-fill-now {
+  width: 100%;
+  background: linear-gradient(135deg, #7c4dff, #5c2ddf);
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  padding: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+  letter-spacing: 0.01em;
+}
+.btn-fill-now:hover { background: linear-gradient(135deg, #9c6dff, #7c4dff); }
+.btn-fill-now:disabled { opacity: 0.5; cursor: not-allowed; }
+.fill-now-status {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #888;
+  text-align: center;
+}
+.fill-now-status.ok   { color: #44cc88; }
+.fill-now-status.warn { color: #ffaa44; }
+
+.section-divider {
+  text-align: center;
+  font-size: 10px;
+  color: #444;
+  margin: 4px 0 10px;
+  letter-spacing: 0.04em;
+}

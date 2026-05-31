@@ -321,6 +321,64 @@ chrome.runtime.onMessage.addListener(msg => {
   }
 });
 
+// ── FILL CURRENT PAGE ─────────────────────────────────────────────────────────
+async function initFillNow() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.url) return;
+
+  // Show the URL
+  try {
+    const url = new URL(tab.url);
+    document.getElementById('current-page-url').textContent = url.hostname + url.pathname;
+  } catch {
+    document.getElementById('current-page-url').textContent = tab.url;
+  }
+
+  // Disable on chrome:// pages where content scripts can't run
+  const restricted = tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('about:');
+  if (restricted) {
+    document.getElementById('btn-fill-now').disabled = true;
+    document.getElementById('current-page-url').textContent = 'Not available on this page';
+  }
+}
+
+document.getElementById('btn-fill-now').addEventListener('click', async () => {
+  const btn    = document.getElementById('btn-fill-now');
+  const status = document.getElementById('fill-now-status');
+
+  btn.disabled     = true;
+  btn.textContent  = '⏳ Filling...';
+  status.className = 'fill-now-status';
+  status.classList.remove('hidden');
+  status.textContent = 'Injecting autofill...';
+
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+    // Inject content script if not already present (handles pages loaded before extension)
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ['content.js'],
+    }).catch(() => {}); // ignore if already injected
+
+    const response = await new Promise((resolve, reject) => {
+      chrome.tabs.sendMessage(tab.id, { type: 'AUTO_APPLY' }, res => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve(res);
+      });
+    });
+
+    status.textContent = response?.success ? '✅ Done!' : '⚠️ Partial — check the page';
+    status.className   = 'fill-now-status ' + (response?.success ? 'ok' : 'warn');
+  } catch (err) {
+    status.textContent = '⚠️ ' + (err.message.includes('Cannot access') ? 'Cannot run on this page type' : err.message);
+    status.className   = 'fill-now-status warn';
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = '✨ Autofill This Page';
+  }
+});
+
 // ── SETTINGS LINK ──────────────────────────────────────────────────────────────
 document.getElementById('openOptions').addEventListener('click', e => {
   e.preventDefault();
@@ -330,3 +388,4 @@ document.getElementById('openOptions').addEventListener('click', e => {
 // ── INIT ───────────────────────────────────────────────────────────────────────
 detectCurrentPage();
 loadOutreach();
+initFillNow();

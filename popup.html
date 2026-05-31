@@ -83,6 +83,17 @@
 
   <!-- AUTO-APPLY TAB -->
   <div id="tab-apply" class="tab-content hidden">
+
+    <!-- Fill current page instantly -->
+    <div class="current-page-card">
+      <div class="current-page-title">Current Page</div>
+      <div class="current-page-sub" id="current-page-url">Detecting page...</div>
+      <button id="btn-fill-now" class="btn-fill-now">&#10024; Autofill This Page</button>
+      <div class="fill-now-status hidden" id="fill-now-status"></div>
+    </div>
+
+    <div class="section-divider">— or batch auto-apply from job list —</div>
+
     <div class="apply-status" id="apply-status">
       <div class="status-icon" id="status-icon">&#9899;</div>
       <div class="status-text" id="status-text">Idle</div>
