@@ -52,6 +52,19 @@ const RESUME_FIELDS = [
 
 function $(id) { return document.getElementById(id); }
 
+// ── TAB SWITCHING ──────────────────────────────────────────────────────────────
+document.querySelectorAll('.topbar-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.topbar-tab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    const tab = btn.dataset.tab;
+    document.getElementById('tab-applications').style.display = tab === 'applications' ? 'block' : 'none';
+    document.querySelector('.page:not(#tab-applications)').style.display = tab === 'settings' ? '' : 'none';
+    document.getElementById('btn-save').style.display = tab === 'settings' ? '' : 'none';
+    if (tab === 'applications') loadApplicationLog();
+  });
+});
+
 // ── LOAD ──────────────────────────────────────────────────────────────────────
 chrome.storage.sync.get(['backendUrl'], d => {
   if (d.backendUrl) $('backendUrl').value = d.backendUrl;
@@ -637,4 +650,72 @@ $('btn-save').addEventListener('click', () => {
     renderLearnedFields(learnedAnswers);
     renderExtendedProfile(resumeData);
   });
+});
+
+// ── APPLICATION LOG ────────────────────────────────────────────────────────────
+function loadApplicationLog() {
+  chrome.storage.local.get({ applicationLog: [] }, d => {
+    renderApplicationLog(d.applicationLog);
+  });
+}
+
+function renderApplicationLog(log) {
+  const list   = $('application-list');
+  const search = ($('app-search')?.value || '').toLowerCase();
+  const status = $('app-status-filter')?.value || '';
+  const badge  = $('app-count');
+
+  badge.textContent = log.length ? log.length : '';
+
+  let filtered = log;
+  if (search) filtered = filtered.filter(a =>
+    (a.title || '').toLowerCase().includes(search) ||
+    (a.url   || '').toLowerCase().includes(search)
+  );
+  if (status) filtered = filtered.filter(a => a.status === status);
+
+  if (!filtered.length) {
+    list.innerHTML = `<div class="no-learned">${log.length ? 'No matching applications.' : 'No applications logged yet.'}</div>`;
+    return;
+  }
+
+  list.innerHTML = filtered.map(a => `
+    <div class="app-row" data-id="${a.id}">
+      <div style="min-width:0;">
+        <div class="app-title">${escHtml(a.title || a.url)}</div>
+        <div class="app-url"><a href="${escHtml(a.url)}" target="_blank" style="color:#555;text-decoration:none;">${escHtml(a.url)}</a></div>
+      </div>
+      <div class="app-date">${new Date(a.date).toLocaleDateString()} ${new Date(a.date).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</div>
+      <div class="app-status ${a.status}">${a.status}</div>
+      <button class="app-del" data-id="${a.id}" title="Remove">✕</button>
+    </div>
+  `).join('');
+
+  list.querySelectorAll('.app-del').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = +btn.dataset.id;
+      chrome.storage.local.get({ applicationLog: [] }, d => {
+        const updated = d.applicationLog.filter(a => a.id !== id);
+        chrome.storage.local.set({ applicationLog: updated }, () => renderApplicationLog(updated));
+      });
+    });
+  });
+}
+
+// Search/filter live
+['app-search', 'app-status-filter'].forEach(id => {
+  $(id)?.addEventListener('input', () => {
+    chrome.storage.local.get({ applicationLog: [] }, d => renderApplicationLog(d.applicationLog));
+  });
+});
+
+$('btn-clear-log')?.addEventListener('click', () => {
+  if (!confirm('Clear the entire application log?')) return;
+  chrome.storage.local.set({ applicationLog: [] }, () => renderApplicationLog([]));
+});
+
+// Load badge count on page open
+chrome.storage.local.get({ applicationLog: [] }, d => {
+  const badge = $('app-count');
+  if (badge && d.applicationLog.length) badge.textContent = d.applicationLog.length;
 });

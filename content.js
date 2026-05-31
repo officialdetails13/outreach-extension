@@ -37,10 +37,17 @@ function watchForForms() {
   mo.observe(document.body || document.documentElement, { childList: true, subtree: true });
 }
 
+// Detects any fillable inputs — works even when <form> tags are absent (ADP, etc.)
+const FILLABLE = 'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]), select, textarea, [role="combobox"]';
+
+function pageHasFillableInputs() {
+  return Array.from(document.querySelectorAll(FILLABLE))
+    .some(el => el.offsetParent !== null && !el.disabled);
+}
+
 function tryInjectOverlay() {
   if (_overlayBtn) return;
-  const forms = document.querySelectorAll('form');
-  if (!forms.length) return;
+  if (!pageHasFillableInputs()) return;
   injectOverlayButton();
 }
 
@@ -124,12 +131,68 @@ function isRequiredField(field) {
   return false;
 }
 
+// ── APPLICATION LOG + DEDUPLICATION ──────────────────────────────────────────
+function normalizeJobUrl(url) {
+  try {
+    const u = new URL(url || location.href);
+    const h = u.hostname.replace(/^www\./, '');
+
+    if (h.includes('adp.com'))
+      return 'adp:' + (u.searchParams.get('jobId') || u.searchParams.get('requisitionId') || u.pathname);
+
+    if (h.includes('linkedin.com')) {
+      const m = u.pathname.match(/\/(jobs\/view|apply)\/(\d+)/);
+      return m ? 'linkedin:' + m[2] : h + u.pathname;
+    }
+
+    if (h.includes('greenhouse.io'))   return 'greenhouse:'   + u.pathname.replace(/\/$/, '');
+    if (h.includes('lever.co'))        return 'lever:'        + u.pathname.replace(/\/$/, '');
+    if (h.includes('workday'))         return 'workday:'      + (u.searchParams.get('Job_ID') || u.pathname);
+    if (h.includes('icims.com'))       return 'icims:'        + (u.searchParams.get('job') || u.pathname);
+    if (h.includes('ziprecruiter.com'))return 'zip:'          + u.pathname.replace(/\/$/, '');
+    if (h.includes('indeed.com'))      return 'indeed:'       + (u.searchParams.get('jk') || u.pathname);
+
+    // Generic: hostname + pathname, no query string
+    return h + u.pathname.replace(/\/$/, '');
+  } catch { return url; }
+}
+
+async function isAlreadyApplied() {
+  const norm = normalizeJobUrl(location.href);
+  return new Promise(resolve => {
+    chrome.storage.local.get({ applicationLog: [] }, d => {
+      const dup = d.applicationLog.some(a => a.normalizedUrl === norm);
+      resolve(dup);
+    });
+  });
+}
+
+async function logApplication(status) {
+  const norm = normalizeJobUrl(location.href);
+  chrome.storage.local.get({ applicationLog: [] }, d => {
+    const log = d.applicationLog.filter(a => a.normalizedUrl !== norm); // replace if re-applied
+    log.unshift({
+      id:            Date.now(),
+      url:           location.href,
+      normalizedUrl: norm,
+      title:         document.title.slice(0, 120),
+      date:          new Date().toISOString(),
+      status,        // 'applied' | 'failed' | 'skipped'
+    });
+    chrome.storage.local.set({ applicationLog: log.slice(0, 500) }); // cap at 500
+  });
+}
+
 // ── APPLY / SUBMIT BUTTON HELPERS ────────────────────────────────────────────
 function hasVisibleForm() {
-  return Array.from(document.querySelectorAll('form')).some(f => {
-    const inputs = f.querySelectorAll('input:not([type="hidden"]), select, textarea, [role="combobox"]');
-    return inputs.length > 0 && f.offsetParent !== null;
+  // Check native <form> tags first
+  const inForm = Array.from(document.querySelectorAll('form')).some(f => {
+    return f.offsetParent !== null &&
+      f.querySelectorAll(FILLABLE).length > 0;
   });
+  if (inForm) return true;
+  // Fallback: any visible fillable inputs anywhere on page (ADP, custom portals)
+  return pageHasFillableInputs();
 }
 
 async function clickApplyButton() {
@@ -210,7 +273,13 @@ async function handleAutofillClick() {
     return;
   }
 
-  // Step 0: if no form is visible, try clicking an Apply button first
+  // Step 0: deduplication — warn if already applied to this job
+  if (await isAlreadyApplied()) {
+    const proceed = confirm('⚠️ You have already applied to this job.\n\nClick OK to apply again, or Cancel to skip.');
+    if (!proceed) { setOverlayState('idle'); return; }
+  }
+
+  // Step 0b: if no form is visible, try clicking an Apply button first
   if (!hasVisibleForm()) {
     showToast('🔍 No form visible — looking for Apply button...', 'info');
     const clicked = await clickApplyButton();
@@ -327,16 +396,20 @@ async function handleAutofillClick() {
     const errorFields = await captureValidationErrors();
     if (errorFields.length) {
       await saveLearnedFields(errorFields);
+      await logApplication('failed');
       setOverlayState('error');
-      showToast(`⚠️ ${errorFields.length} field${errorFields.length !== 1 ? 's' : ''} failed validation — saved to Settings → Needs Answers.`, 'warn');
+      showToast(`⚠️ ${errorFields.length} field${errorFields.length !== 1 ? 's' : ''} failed — saved to Needs Answers. Fix & re-run.`, 'warn');
     } else {
+      await logApplication('applied');
       setOverlayState('done');
-      showToast(`✅ Submitted! ${filled} fields filled.`, 'success');
+      showToast(`✅ Submitted! ${filled} fields filled. Logged to Applications.`, 'success');
     }
   } else {
     const leftover = scanAllFields().filter(f => !isFieldFilled(f) && f.type !== 'file');
+    const status = leftover.length === 0 ? 'applied' : 'failed';
+    await logApplication(status);
     setOverlayState(leftover.length === 0 ? 'done' : 'error');
-    showToast(`✅ Filled ${filled} field${filled !== 1 ? 's' : ''}${leftover.length ? ` · ${leftover.length} need review` : ''} — no submit button found.`, 'success');
+    showToast(`✅ Filled ${filled} field${filled !== 1 ? 's' : ''}${leftover.length ? ` · ${leftover.length} need review` : ''}. Logged to Applications.`, 'success');
   }
 }
 

@@ -225,9 +225,45 @@
     .status-msg.err  { background: #200e0e; color: #ff6677; border: 1px solid #4a1a1a; }
     .status-msg.info { background: #0e0e28; color: #8899ff; border: 1px solid #1e1e4a; }
 
+    /* TOPBAR TABS */
+    .topbar-tabs { display: flex; gap: 4px; margin-left: 20px; }
+    .topbar-tab {
+      background: none; border: none; border-bottom: 2px solid transparent;
+      color: #666; font-size: 13px; font-weight: 600; padding: 4px 12px;
+      cursor: pointer; transition: all 0.15s; border-radius: 0;
+    }
+    .topbar-tab:hover { color: #aaa; }
+    .topbar-tab.active { color: #c8b4ff; border-bottom-color: #7c4dff; }
+    .app-badge {
+      background: #2a1a4a; color: #9c7dff; border-radius: 10px;
+      font-size: 10px; padding: 1px 6px; margin-left: 4px; font-weight: 700;
+    }
+
+    /* APPLICATION LOG */
+    .app-row {
+      display: grid; grid-template-columns: 1fr auto auto auto;
+      gap: 12px; align-items: center;
+      padding: 10px 14px; border-bottom: 1px solid #1a1a2a;
+      font-size: 12px;
+    }
+    .app-row:last-child { border-bottom: none; }
+    .app-title { font-weight: 600; color: #e0e0f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .app-url   { font-size: 10px; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .app-date  { font-size: 11px; color: #555; white-space: nowrap; }
+    .app-status {
+      font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 4px;
+      text-transform: uppercase; white-space: nowrap;
+    }
+    .app-status.applied { background: #0e2010; color: #44cc88; }
+    .app-status.failed  { background: #2e1000; color: #ffaa44; }
+    .app-status.skipped { background: #1a1a2a; color: #666; }
+    .app-del { background: none; border: none; color: #333; cursor: pointer; font-size: 14px; padding: 0 4px; }
+    .app-del:hover { color: #ff5566; }
+
     @media (max-width: 760px) {
       .grid-main { grid-template-columns: 1fr; }
       .page { padding: 16px; }
+      .topbar-tabs { display: none; }
     }
   </style>
 </head>
@@ -237,8 +273,10 @@
 <div class="topbar">
   <div class="topbar-left">
     <span style="font-size:20px;">⚙️</span>
-    <div>
-      <div class="topbar-title">Extension Settings</div>
+    <div class="topbar-title">Extension Settings</div>
+    <div class="topbar-tabs">
+      <button class="topbar-tab active" data-tab="settings">⚙️ Settings</button>
+      <button class="topbar-tab" data-tab="applications">📋 Applications <span id="app-count" class="app-badge"></span></button>
     </div>
   </div>
   <div class="topbar-right">
@@ -430,6 +468,28 @@
   </div>
 
 </div><!-- /page -->
+
+<!-- ── APPLICATIONS TAB ────────────────────────────────────────────── -->
+<div class="page" id="tab-applications" style="display:none;">
+  <div class="card">
+    <div class="card-title" style="margin-bottom:16px;">
+      <span>📋 Application Log</span>
+      <div style="display:flex;gap:8px;">
+        <input type="text" id="app-search" placeholder="Search title or URL..." style="width:220px;font-size:12px;padding:6px 10px;" />
+        <select id="app-status-filter" style="width:120px;font-size:12px;padding:6px 10px;">
+          <option value="">All statuses</option>
+          <option value="applied">Applied</option>
+          <option value="failed">Failed</option>
+          <option value="skipped">Skipped</option>
+        </select>
+        <button id="btn-clear-log" style="background:none;color:#ff5566;border:1px solid #3a1e1e;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;">🗑 Clear Log</button>
+      </div>
+    </div>
+    <div id="application-list">
+      <div class="no-learned">No applications logged yet. Run autofill on a job application to start tracking.</div>
+    </div>
+  </div>
+</div>
 
 <script src="options.js"></script>
 </body>
