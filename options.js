@@ -39,6 +39,20 @@ chrome.storage.local.get(['resumeData', 'claudeApiKey', 'resumeFile', 'resumeTex
 });
 
 // ── RESUME FILE UPLOAD ────────────────────────────────────────────────────────
+$('resume-upload-box').addEventListener('click', function (e) {
+  // Don't open file dialog when clicking the Remove button
+  if (e.target.closest('#btn-clear-resume')) return;
+  $('resumeFileInput').click();
+});
+
+$('btn-clear-resume').addEventListener('click', function (e) {
+  e.stopPropagation();
+  chrome.storage.local.remove('resumeFile');
+  $('resume-upload-box').classList.remove('has-file');
+  $('resume-filename').textContent = '';
+  $('resumeFileInput').value = '';
+});
+
 $('resumeFileInput').addEventListener('change', function () {
   const file = this.files[0];
   if (!file) return;
@@ -66,14 +80,6 @@ $('resumeFileInput').addEventListener('change', function () {
   reader.readAsDataURL(file);
 });
 
-function clearResume(e) {
-  e.stopPropagation();
-  chrome.storage.local.remove('resumeFile');
-  $('resume-upload-box').classList.remove('has-file');
-  $('resume-filename').textContent = '';
-  $('resumeFileInput').value = '';
-}
-window.clearResume = clearResume;
 
 // ── LEARNED FIELDS ────────────────────────────────────────────────────────────
 function renderLearnedFields(learned) {

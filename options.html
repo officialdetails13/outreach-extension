@@ -144,12 +144,12 @@
     <h2>📄 Resume File</h2>
     <p class="hint" style="margin-bottom:4px;">Uploaded resume is used to auto-populate file upload fields on job applications.</p>
 
-    <div class="upload-box" id="resume-upload-box" onclick="document.getElementById('resumeFileInput').click()">
+    <div class="upload-box" id="resume-upload-box">
       <input type="file" id="resumeFileInput" accept=".pdf,.doc,.docx,.txt" />
       <div class="upload-icon">📎</div>
       <div class="upload-text">Click to upload your resume (PDF, DOCX, TXT)</div>
       <div class="upload-filename" id="resume-filename"></div>
-      <button class="btn-clear-file" id="btn-clear-resume" onclick="clearResume(event)">✕ Remove</button>
+      <button class="btn-clear-file" id="btn-clear-resume">✕ Remove</button>
     </div>
 
     <label>Resume Text (paste for best AI results)</label>
