@@ -527,18 +527,26 @@ function fillCheckbox(el, value) {
 
 async function fillFileInput(el, base64, fileName) {
   try {
-    const [meta, data] = base64.split(',');
-    const mimeType = meta.match(/:(.*?);/)[1];
-    const binary   = atob(data);
-    const bytes    = new Uint8Array(binary.length);
+    // base64 may be a data URL ("data:mime;base64,xxx") or raw base64
+    let mimeType = 'application/octet-stream';
+    let rawB64   = base64;
+    if (base64.includes(',')) {
+      const [meta, data] = base64.split(',');
+      rawB64   = data;
+      const m  = meta.match(/:(.*?);/);
+      if (m) mimeType = m[1];
+    }
+    const binary = atob(rawB64);
+    const bytes  = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     const file = new File([bytes], fileName || 'resume.pdf', { type: mimeType });
     const dt   = new DataTransfer();
     dt.items.add(file);
     el.files = dt.files;
     el.dispatchEvent(new Event('change', { bubbles: true }));
+    el.dispatchEvent(new Event('input',  { bubbles: true }));
     el.classList.add('ot-filled');
-    return true;
+    return el.files.length > 0; // verify it actually stuck
   } catch { return false; }
 }
 

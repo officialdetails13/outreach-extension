@@ -4,349 +4,416 @@
   <meta charset="UTF-8" />
   <title>Outreach Extension Settings</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      font-size: 14px;
-      background: #0f0f13;
-      color: #e8e8f0;
-      padding: 32px;
-      max-width: 580px;
-    }
-    h1 { font-size: 20px; color: #c8b4ff; margin-bottom: 6px; }
-    .sub { color: #666; font-size: 12px; margin-bottom: 32px; }
-    .section { margin-bottom: 28px; }
-    .section h2 {
-      font-size: 13px; font-weight: 700; color: #c8b4ff;
-      text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 12px;
-      display: flex; align-items: center; gap: 7px;
-    }
-    label { display: block; color: #aaa; font-size: 12px; margin-bottom: 4px; margin-top: 12px; }
-    input[type="text"], input[type="url"], input[type="tel"],
-    input[type="email"], textarea, select {
-      width: 100%;
-      background: #1a1a24;
-      border: 1px solid #2a2a3a;
-      border-radius: 6px;
-      color: #e8e8f0;
-      padding: 9px 12px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 13px;
-      outline: none;
+      background: #0a0a10;
+      color: #e0e0f0;
+      min-height: 100vh;
     }
-    input:focus, textarea:focus, select:focus { border-color: #c8b4ff; }
-    textarea { resize: vertical; min-height: 80px; font-family: inherit; }
-    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .btn-save {
-      background: #7c4dff; color: #fff; border: none; border-radius: 6px;
-      padding: 10px 24px; font-size: 14px; font-weight: 600;
-      cursor: pointer; margin-top: 8px; transition: background 0.15s;
+
+    /* ── STICKY TOP BAR ─────────────────────────────────────────── */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: #13131f;
+      border-bottom: 1px solid #2a2a40;
+      padding: 0 28px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      backdrop-filter: blur(8px);
     }
-    .btn-save:hover { background: #9c6dff; }
+    .topbar-left { display: flex; align-items: center; gap: 10px; }
+    .topbar-title { font-size: 16px; font-weight: 700; color: #c8b4ff; }
+    .topbar-sub { font-size: 11px; color: #555; }
+    .topbar-right { display: flex; align-items: center; gap: 12px; }
+    .btn-save-top {
+      background: #7c4dff; color: #fff; border: none; border-radius: 7px;
+      padding: 8px 22px; font-size: 13px; font-weight: 700;
+      cursor: pointer; transition: background 0.15s; letter-spacing: 0.01em;
+    }
+    .btn-save-top:hover { background: #9c6dff; }
     .toast {
-      display: inline-block; margin-left: 12px;
-      color: #44cc88; font-size: 12px; opacity: 0; transition: opacity 0.3s;
+      font-size: 12px; color: #44cc88; font-weight: 600;
+      opacity: 0; transition: opacity 0.3s; pointer-events: none;
     }
     .toast.show { opacity: 1; }
-    hr { border: none; border-top: 1px solid #2a2a3a; margin: 24px 0; }
-    .hint { color: #555; font-size: 11px; margin-top: 4px; line-height: 1.5; }
 
-    /* RESUME UPLOAD */
-    .upload-box {
-      border: 2px dashed #3a3a52;
-      border-radius: 8px;
-      padding: 20px;
-      text-align: center;
-      cursor: pointer;
-      transition: all 0.2s;
-      margin-top: 10px;
-      background: #12121e;
+    /* ── PAGE LAYOUT ────────────────────────────────────────────── */
+    .page { max-width: 1100px; margin: 0 auto; padding: 24px 28px 60px; }
+
+    .grid-main {
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 20px;
+      align-items: start;
     }
-    .upload-box:hover { border-color: #7c4dff; background: #16162a; }
+
+    .col-left  { display: flex; flex-direction: column; gap: 16px; }
+    .col-right { display: flex; flex-direction: column; gap: 16px; }
+
+    .full-width { margin-top: 20px; }
+
+    /* ── CARDS ──────────────────────────────────────────────────── */
+    .card {
+      background: #13131f;
+      border: 1px solid #22223a;
+      border-radius: 12px;
+      padding: 20px 22px;
+    }
+    .card-title {
+      font-size: 12px; font-weight: 700; color: #9c7dff;
+      text-transform: uppercase; letter-spacing: 0.07em;
+      margin-bottom: 14px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .card-title span { display: flex; align-items: center; gap: 6px; }
+
+    /* ── FORM ELEMENTS ──────────────────────────────────────────── */
+    .field { margin-bottom: 12px; }
+    .field:last-child { margin-bottom: 0; }
+    label {
+      display: block; color: #888; font-size: 11px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px;
+    }
+    input[type="text"], input[type="url"], input[type="tel"],
+    input[type="email"], textarea, select {
+      width: 100%; background: #0f0f1a; border: 1px solid #2a2a3e;
+      border-radius: 7px; color: #e0e0f0; padding: 8px 11px;
+      font-size: 13px; outline: none; transition: border-color 0.15s;
+      font-family: inherit;
+    }
+    input:focus, textarea:focus, select:focus { border-color: #7c4dff; }
+    textarea { resize: vertical; min-height: 72px; }
+    select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23666' d='M5 6L0 0h10z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; }
+
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+
+    .hint { color: #4a4a6a; font-size: 11px; line-height: 1.5; margin-top: 4px; }
+    .hint a { color: #9c7dff; }
+
+    /* ── TOGGLE SWITCH ──────────────────────────────────────────── */
+    .toggle-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 0; border-bottom: 1px solid #1e1e30; margin-bottom: 12px;
+    }
+    .toggle-label { font-size: 13px; font-weight: 600; color: #d0d0f0; }
+    .toggle-sub { font-size: 11px; color: #555; margin-top: 1px; }
+    .toggle-switch { position: relative; flex-shrink: 0; cursor: pointer; }
+    .toggle-switch input { display: none; }
+    .toggle-track {
+      display: block; width: 42px; height: 22px;
+      background: #2a2a3a; border-radius: 11px;
+      transition: background 0.2s; position: relative;
+    }
+    .toggle-thumb {
+      position: absolute; top: 2px; left: 2px;
+      width: 18px; height: 18px; border-radius: 50%;
+      background: #555; transition: all 0.2s;
+    }
+    .toggle-switch input:checked + .toggle-track { background: #7c4dff; }
+    .toggle-switch input:checked + .toggle-track .toggle-thumb { transform: translateX(20px); background: #fff; }
+    #claude-key-section { transition: opacity 0.2s; }
+    #claude-key-section.disabled { opacity: 0.3; pointer-events: none; }
+
+    /* ── RESUME UPLOAD ──────────────────────────────────────────── */
+    .upload-box {
+      border: 2px dashed #2a2a3e; border-radius: 8px; padding: 16px;
+      text-align: center; cursor: pointer; transition: all 0.2s; background: #0c0c16;
+    }
+    .upload-box:hover { border-color: #7c4dff; background: #12122a; }
     .upload-box.has-file { border-color: #44cc88; border-style: solid; }
     .upload-box input[type="file"] { display: none; }
-    .upload-icon { font-size: 28px; margin-bottom: 6px; }
-    .upload-text { font-size: 13px; color: #888; }
-    .upload-filename {
-      margin-top: 8px; font-size: 12px; color: #44cc88;
-      font-weight: 600; display: none;
-    }
+    .upload-icon { font-size: 24px; margin-bottom: 4px; }
+    .upload-text { font-size: 12px; color: #666; }
+    .upload-filename { margin-top: 6px; font-size: 12px; color: #44cc88; font-weight: 600; display: none; }
     .upload-box.has-file .upload-filename { display: block; }
     .upload-box.has-file .upload-text { display: none; }
     .btn-clear-file {
       background: none; border: 1px solid #3a3a52; border-radius: 4px;
-      color: #888; font-size: 11px; padding: 3px 8px;
-      cursor: pointer; margin-top: 6px; display: none;
+      color: #888; font-size: 10px; padding: 2px 7px; cursor: pointer; margin-top: 5px; display: none;
     }
     .upload-box.has-file .btn-clear-file { display: inline-block; }
 
-    /* LEARNED FIELDS */
-    .learned-field {
-      background: #1a1a24;
-      border: 1px solid #2a2a3a;
-      border-radius: 8px;
-      padding: 12px 14px;
-      margin-bottom: 10px;
+    /* ── PARSE RESUME BUTTON ────────────────────────────────────── */
+    .btn-parse-resume {
+      width: 100%; margin-top: 10px; background: #0e2010; color: #44cc88;
+      border: 1px solid #1e4a28; border-radius: 7px; padding: 9px;
+      font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.15s;
     }
-    .learned-field-label {
-      font-size: 12px; color: #9c7dff; font-weight: 600;
-      margin-bottom: 6px; line-height: 1.4;
+    .btn-parse-resume:hover { background: #122815; border-color: #44cc88; }
+    .btn-parse-resume:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── PROFILE SECTION ────────────────────────────────────────── */
+    .profile-updated { border-color: #44cc88 !important; }
+
+    /* ── LEARNED FIELDS ─────────────────────────────────────────── */
+    .learned-toolbar {
+      display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap;
     }
-    .learned-field textarea {
-      min-height: 60px; margin-top: 0;
-    }
-    .learned-field-meta {
-      font-size: 10px; color: #444; margin-top: 4px;
-    }
-    .no-learned {
-      text-align: center; color: #444; padding: 20px;
-      font-size: 12px; font-style: italic;
-    }
-    .badge-new {
-      background: #2a1a4a; color: #9c7dff; border-radius: 4px;
-      font-size: 10px; padding: 2px 6px; font-weight: 700;
-      text-transform: uppercase; margin-left: 6px;
-    }
-    .btn-clear-learned {
-      background: none; border: 1px solid #3a2a2a; border-radius: 4px;
-      color: #ff5566; font-size: 11px; padding: 3px 8px;
-      cursor: pointer; float: right; margin-top: -2px;
-    }
-    .btn-clear-learned:hover { background: #2e1a1a; }
     .btn-fill-ai {
-      background: #1a1a2e; color: #c8b4ff;
-      border: 1px solid #4a3a88; border-radius: 6px;
-      padding: 8px 16px; font-size: 12px; font-weight: 600;
-      cursor: pointer; transition: all 0.15s; margin-bottom: 10px;
-    }
-    .btn-fill-ai:hover { background: #2a1a4a; border-color: #7c4dff; }
-    .btn-fill-ai:disabled { opacity: 0.5; cursor: not-allowed; }
-    .btn-clear-all {
-      background: none; color: #ff5566; border: 1px solid #3a2020;
-      border-radius: 6px; padding: 8px 14px; font-size: 12px; font-weight: 600;
+      background: #16163a; color: #c8b4ff; border: 1px solid #3a3a6a;
+      border-radius: 7px; padding: 7px 14px; font-size: 12px; font-weight: 600;
       cursor: pointer; transition: all 0.15s;
     }
-    .btn-clear-all:hover { background: #2e1a1a; border-color: #ff5566; }
-    .btn-parse-resume {
-      margin-top: 10px; background: #1a2e1a; color: #44cc88;
-      border: 1px solid #2a5a3a; border-radius: 6px; padding: 9px 16px;
-      font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; width: 100%;
+    .btn-fill-ai:hover { background: #22226a; border-color: #7c4dff; }
+    .btn-fill-ai:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-clear-all {
+      background: none; color: #ff5566; border: 1px solid #3a1e1e;
+      border-radius: 7px; padding: 7px 14px; font-size: 12px; font-weight: 600;
+      cursor: pointer; transition: all 0.15s; margin-left: auto;
     }
-    .btn-parse-resume:hover { background: #1e3e22; border-color: #44cc88; }
-    .btn-parse-resume:disabled { opacity: 0.5; cursor: not-allowed; }
-    .profile-updated { border-color: #44cc88 !important; transition: border-color 0.4s; }
+    .btn-clear-all:hover { background: #2a1414; border-color: #ff5566; }
 
-    /* TOGGLE SWITCH */
-    .toggle-row-header {
-      display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 8px;
-      font-size: 13px; font-weight: 600; color: #e8e8f0;
+    .learned-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 12px;
     }
-    .toggle-switch { position: relative; display: inline-block; cursor: pointer; }
-    .toggle-switch input { display: none; }
-    .toggle-track {
-      display: block; width: 44px; height: 24px;
-      background: #2a2a3a; border-radius: 12px;
-      transition: background 0.2s;
-      position: relative;
+    .learned-field {
+      background: #0f0f1a; border: 1px solid #22223a;
+      border-radius: 9px; padding: 12px 14px;
     }
-    .toggle-thumb {
-      position: absolute; top: 3px; left: 3px;
-      width: 18px; height: 18px; border-radius: 50%;
-      background: #666; transition: all 0.2s;
+    .learned-field-label {
+      font-size: 11px; font-weight: 700; color: #9c7dff;
+      margin-bottom: 8px; line-height: 1.4;
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 6px;
     }
-    .toggle-switch input:checked + .toggle-track { background: #7c4dff; }
-    .toggle-switch input:checked + .toggle-track .toggle-thumb {
-      transform: translateX(20px); background: #fff;
+    .learned-field-label-text { flex: 1; }
+    .learned-field textarea { min-height: 56px; margin-top: 0; font-size: 12px; }
+    .learned-field input[type="text"] { font-size: 12px; }
+    .learned-field select { font-size: 12px; }
+    .learned-field-meta { font-size: 10px; color: #333; margin-top: 5px; }
+    .badge-new {
+      background: #22124a; color: #9c7dff; border-radius: 4px;
+      font-size: 9px; padding: 2px 5px; font-weight: 700;
+      text-transform: uppercase; white-space: nowrap; flex-shrink: 0;
     }
-    #claude-key-section { transition: opacity 0.2s; }
-    #claude-key-section.disabled { opacity: 0.35; pointer-events: none; }
-    .learned-radio-group { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+    .btn-clear-learned {
+      background: none; border: none; color: #44223a;
+      font-size: 14px; cursor: pointer; padding: 0 2px; flex-shrink: 0;
+      line-height: 1; transition: color 0.15s;
+    }
+    .btn-clear-learned:hover { color: #ff5566; }
+    .learned-radio-group { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
     .learned-radio-item {
-      display: flex; align-items: center; gap: 6px;
-      background: #12121e; border: 1px solid #2a2a3a; border-radius: 5px;
-      padding: 6px 10px; cursor: pointer; font-size: 12px; color: #ccc;
+      display: flex; align-items: center; gap: 5px;
+      background: #0c0c18; border: 1px solid #22223a; border-radius: 5px;
+      padding: 5px 9px; cursor: pointer; font-size: 11px; color: #aaa;
     }
-    .learned-radio-item:has(input:checked) { border-color: #7c4dff; color: #c8b4ff; background: #1a1230; }
+    .learned-radio-item:has(input:checked) { border-color: #7c4dff; color: #c8b4ff; background: #140e2a; }
     .learned-radio-item input[type="radio"] { accent-color: #7c4dff; }
-    .learned-field select { margin-top: 4px; }
+    .no-learned { text-align: center; color: #333; padding: 32px 0; font-size: 12px; font-style: italic; grid-column: 1/-1; }
+
+    /* ── STATUS MESSAGES ────────────────────────────────────────── */
+    .status-msg { font-size: 11px; margin-top: 7px; line-height: 1.5; padding: 6px 10px; border-radius: 5px; display: none; }
+    .status-msg.show { display: block; }
+    .status-msg.ok   { background: #0e2010; color: #44cc88; border: 1px solid #1e4a28; }
+    .status-msg.warn { background: #1e1000; color: #ffaa44; border: 1px solid #4a3000; }
+    .status-msg.err  { background: #200e0e; color: #ff6677; border: 1px solid #4a1a1a; }
+    .status-msg.info { background: #0e0e28; color: #8899ff; border: 1px solid #1e1e4a; }
+
+    @media (max-width: 760px) {
+      .grid-main { grid-template-columns: 1fr; }
+      .page { padding: 16px; }
+    }
   </style>
 </head>
 <body>
-  <h1>⚙️ Extension Settings</h1>
-  <p class="sub">Configure your backend, AI key, resume, and profile data for auto-apply.</p>
 
-  <!-- ── BACKEND ─────────────────────────────────────────────────────── -->
-  <div class="section">
-    <h2>🔗 Backend Connection</h2>
-    <label>Outreach Tracker Backend URL</label>
-    <input type="url" id="backendUrl" placeholder="https://outreach-tracker-j73i.onrender.com" value="https://outreach-tracker-j73i.onrender.com" />
-    <p class="hint">Your deployed Outreach Tracker URL.</p>
-  </div>
-
-  <hr />
-
-  <!-- ── CLAUDE AI ───────────────────────────────────────────────────── -->
-  <div class="section">
-    <h2>🤖 Claude AI</h2>
-    <div class="toggle-row-header">
-      <span>Enable Claude AI for form filling</span>
-      <label class="toggle-switch">
-        <input type="checkbox" id="claudeEnabled" checked />
-        <span class="toggle-track"><span class="toggle-thumb"></span></span>
-      </label>
-    </div>
-    <p class="hint" style="margin-bottom:12px;">When enabled, Claude answers essay questions and any fields your profile can't fill. When disabled, only profile data and saved answers are used. Get your key at <a href="https://console.anthropic.com" target="_blank" style="color:#c8b4ff">console.anthropic.com</a>.</p>
-    <div id="claude-key-section">
-      <label>Claude API Key</label>
-      <input type="text" id="claudeApiKey" placeholder="sk-ant-..." style="font-family:monospace;" />
-      <p class="hint">Stored locally — never sent anywhere except Anthropic's API.</p>
+<!-- ── STICKY TOP BAR ──────────────────────────────────────────────── -->
+<div class="topbar">
+  <div class="topbar-left">
+    <span style="font-size:20px;">⚙️</span>
+    <div>
+      <div class="topbar-title">Extension Settings</div>
     </div>
   </div>
-
-  <hr />
-
-  <!-- ── RESUME FILE ─────────────────────────────────────────────────── -->
-  <div class="section">
-    <h2>📄 Resume File</h2>
-    <p class="hint" style="margin-bottom:4px;">Uploaded resume is used to auto-populate file upload fields on job applications.</p>
-
-    <div class="upload-box" id="resume-upload-box">
-      <input type="file" id="resumeFileInput" accept=".pdf,.doc,.docx,.txt" />
-      <div class="upload-icon">📎</div>
-      <div class="upload-text">Click to upload your resume (PDF, DOCX, TXT)</div>
-      <div class="upload-filename" id="resume-filename"></div>
-      <button class="btn-clear-file" id="btn-clear-resume">✕ Remove</button>
-    </div>
-
-    <label>Resume Text (paste for best AI results)</label>
-    <textarea id="resumeText" rows="8" placeholder="Paste your full resume text here. Claude uses this to answer open-ended questions on your behalf.&#10;&#10;Include: work experience, skills, education, achievements, and anything you'd normally write in a cover letter."></textarea>
-    <p class="hint">The more detail you provide, the better Claude can answer essay and short-answer questions.</p>
-
-    <button class="btn-parse-resume" id="btn-parse-resume">🔍 Parse Resume → Fill Profile</button>
-    <div id="parse-status" class="hint" style="margin-top:6px; display:none;"></div>
+  <div class="topbar-right">
+    <span class="toast" id="toast">✓ Saved!</span>
+    <button class="btn-save-top" id="btn-save">Save All Settings</button>
   </div>
+</div>
 
-  <hr />
+<div class="page">
+  <div class="grid-main">
 
-  <!-- ── PROFILE ─────────────────────────────────────────────────────── -->
-  <div class="section">
-    <h2>👤 Profile Data</h2>
-    <p class="hint" style="margin-bottom:12px;">Used to fill standard fields (name, email, address, etc.) without needing AI.</p>
+    <!-- ── LEFT COLUMN ──────────────────────────────────────────── -->
+    <div class="col-left">
 
-    <div class="row2">
-      <div><label>First Name</label><input type="text" id="firstName" placeholder="Jane" /></div>
-      <div><label>Last Name</label><input type="text" id="lastName" placeholder="Smith" /></div>
-    </div>
-    <div class="row2">
-      <div><label>Email</label><input type="email" id="email" placeholder="jane@example.com" /></div>
-      <div><label>Phone</label><input type="tel" id="phone" placeholder="+1 555 000 0000" /></div>
-    </div>
-    <div class="row2">
-      <div><label>City</label><input type="text" id="city" placeholder="New York" /></div>
-      <div><label>ZIP / Postal</label><input type="text" id="zip" placeholder="10001" /></div>
-    </div>
-
-    <label>Street Address</label>
-    <input type="text" id="address" placeholder="123 Main Street" />
-
-    <label>Current / Target Job Title</label>
-    <input type="text" id="title" placeholder="Software Engineer" />
-
-    <label>Current Employer</label>
-    <input type="text" id="employer" placeholder="e.g. Google" />
-
-    <label>Years of Experience</label>
-    <input type="text" id="yearsExp" placeholder="3" />
-
-    <div class="row2">
-      <div>
-        <label>Field of Study / Major</label>
-        <input type="text" id="fieldOfStudy" placeholder="e.g. Computer Science" />
+      <!-- Backend -->
+      <div class="card">
+        <div class="card-title"><span>🔗 Backend</span></div>
+        <div class="field">
+          <label>Outreach Tracker URL</label>
+          <input type="url" id="backendUrl" placeholder="https://outreach-tracker-j73i.onrender.com" value="https://outreach-tracker-j73i.onrender.com" />
+          <p class="hint">Your deployed Render URL.</p>
+        </div>
       </div>
-      <div>
-        <label>Graduation Year</label>
-        <input type="text" id="gradYear" placeholder="2022" />
+
+      <!-- Claude AI -->
+      <div class="card">
+        <div class="card-title"><span>🤖 Claude AI</span></div>
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-label">Enable Claude AI</div>
+            <div class="toggle-sub">Fills essay questions &amp; unmapped fields</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="claudeEnabled" checked />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+        <div id="claude-key-section">
+          <div class="field">
+            <label>API Key</label>
+            <input type="text" id="claudeApiKey" placeholder="sk-ant-..." style="font-family:monospace;font-size:12px;" />
+            <p class="hint">Stored locally — only sent to <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resume File -->
+      <div class="card">
+        <div class="card-title"><span>📄 Resume</span></div>
+
+        <div class="upload-box" id="resume-upload-box">
+          <input type="file" id="resumeFileInput" accept=".pdf,.doc,.docx,.txt" />
+          <div class="upload-icon">📎</div>
+          <div class="upload-text">Click to upload (PDF, DOCX, TXT)</div>
+          <div class="upload-filename" id="resume-filename"></div>
+          <button class="btn-clear-file" id="btn-clear-resume">✕ Remove</button>
+        </div>
+
+        <div class="field" style="margin-top:12px;">
+          <label>Resume Text</label>
+          <textarea id="resumeText" rows="9" placeholder="Paste your full resume here — used by Claude to answer essay questions and fill your profile."></textarea>
+          <p class="hint">More detail = better AI answers.</p>
+        </div>
+
+        <button class="btn-parse-resume" id="btn-parse-resume">🔍 Parse Resume → Fill Profile</button>
+        <div class="status-msg" id="parse-status"></div>
+      </div>
+
+    </div><!-- /col-left -->
+
+    <!-- ── RIGHT COLUMN ─────────────────────────────────────────── -->
+    <div class="col-right">
+      <div class="card">
+        <div class="card-title"><span>👤 Profile Data</span><span style="font-size:10px;color:#444;font-weight:400;text-transform:none;letter-spacing:0">Used for direct field mapping — no AI needed</span></div>
+
+        <div class="row2">
+          <div class="field"><label>First Name</label><input type="text" id="firstName" placeholder="Jane" /></div>
+          <div class="field"><label>Last Name</label><input type="text" id="lastName" placeholder="Smith" /></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Email</label><input type="email" id="email" placeholder="jane@example.com" /></div>
+          <div class="field"><label>Phone</label><input type="tel" id="phone" placeholder="+1 555 000 0000" /></div>
+        </div>
+        <div class="field"><label>Street Address</label><input type="text" id="address" placeholder="123 Main Street" /></div>
+        <div class="row3">
+          <div class="field"><label>City</label><input type="text" id="city" placeholder="New York" /></div>
+          <div class="field"><label>State</label><input type="text" id="state" placeholder="NY" /></div>
+          <div class="field"><label>ZIP</label><input type="text" id="zip" placeholder="10001" /></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Country</label><input type="text" id="country" placeholder="United States" /></div>
+          <div class="field">
+            <label>Work Authorization</label>
+            <select id="workAuth">
+              <option value="">Select...</option>
+              <option value="US Citizen">US Citizen</option>
+              <option value="Green Card">Green Card</option>
+              <option value="H1B">H1B</option>
+              <option value="OPT">OPT / STEM OPT</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Requires Sponsorship?</label>
+            <select id="requiresSponsorship">
+              <option value="false">No</option>
+              <option value="true">Yes</option>
+            </select>
+          </div>
+          <div class="field"><label>Desired Salary (USD)</label><input type="text" id="salary" placeholder="120000" /></div>
+        </div>
+
+        <div style="border-top:1px solid #1e1e2e; margin: 14px 0 12px;"></div>
+
+        <div class="row2">
+          <div class="field"><label>Current Job Title</label><input type="text" id="title" placeholder="Software Engineer" /></div>
+          <div class="field"><label>Current Employer</label><input type="text" id="employer" placeholder="Google" /></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Years of Experience</label><input type="text" id="yearsExp" placeholder="4" /></div>
+          <div class="field"><label>Highest Degree</label>
+            <select id="degree">
+              <option value="">Select...</option>
+              <option value="High School">High School / GED</option>
+              <option value="Associate's">Associate's</option>
+              <option value="Bachelor's">Bachelor's</option>
+              <option value="Master's">Master's</option>
+              <option value="MBA">MBA</option>
+              <option value="PhD">PhD</option>
+            </select>
+          </div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>School / University</label><input type="text" id="school" placeholder="MIT" /></div>
+          <div class="field"><label>Field of Study</label><input type="text" id="fieldOfStudy" placeholder="Computer Science" /></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Graduation Year</label><input type="text" id="gradYear" placeholder="2022" /></div>
+          <div class="field"></div>
+        </div>
+
+        <div style="border-top:1px solid #1e1e2e; margin: 14px 0 12px;"></div>
+
+        <div class="field"><label>LinkedIn URL</label><input type="url" id="linkedin" placeholder="https://linkedin.com/in/yourhandle" /></div>
+        <div class="row2">
+          <div class="field"><label>GitHub URL</label><input type="url" id="github" placeholder="https://github.com/yourhandle" /></div>
+          <div class="field"><label>Portfolio / Website</label><input type="url" id="website" placeholder="https://yoursite.com" /></div>
+        </div>
+        <div class="field">
+          <label>Default Cover Letter</label>
+          <textarea id="coverLetter" rows="4" placeholder="Dear Hiring Manager, I am excited to apply for..."></textarea>
+        </div>
+
+      </div>
+    </div><!-- /col-right -->
+
+  </div><!-- /grid-main -->
+
+  <!-- ── FULL-WIDTH: SAVED FORM ANSWERS ───────────────────────── -->
+  <div class="full-width">
+    <div class="card">
+      <div class="card-title">
+        <span>🧠 Saved Form Answers <span id="learned-badge" class="badge-new" style="display:none;">0 new</span></span>
+      </div>
+      <p class="hint" style="margin-bottom:12px;">Fields autofill couldn't answer are saved here. Fill once — used automatically on every future form.</p>
+
+      <div class="learned-toolbar">
+        <button class="btn-fill-ai" id="btn-fill-ai">🤖 Fill All with AI</button>
+        <button class="btn-clear-all" id="btn-clear-all-learned">🗑 Clear All</button>
+      </div>
+      <div class="status-msg" id="ai-fill-status"></div>
+
+      <div class="learned-grid" id="learned-fields-list">
+        <div class="no-learned">No unanswered fields yet. Run autofill on a form to populate this list.</div>
       </div>
     </div>
-
-    <label>State / Province</label>
-    <input type="text" id="state" placeholder="New York" />
-
-    <label>Highest Degree</label>
-    <select id="degree">
-      <option value="">Select...</option>
-      <option value="High School">High School / GED</option>
-      <option value="Associate's">Associate's</option>
-      <option value="Bachelor's">Bachelor's</option>
-      <option value="Master's">Master's</option>
-      <option value="MBA">MBA</option>
-      <option value="PhD">PhD</option>
-    </select>
-
-    <label>School / University</label>
-    <input type="text" id="school" placeholder="e.g. MIT" />
-
-    <label>LinkedIn URL</label>
-    <input type="url" id="linkedin" placeholder="https://linkedin.com/in/yourhandle" />
-
-    <div class="row2">
-      <div><label>GitHub URL</label><input type="url" id="github" placeholder="https://github.com/yourhandle" /></div>
-      <div><label>Portfolio / Website</label><input type="url" id="website" placeholder="https://yoursite.com" /></div>
-    </div>
-
-    <label>Desired Salary (USD)</label>
-    <input type="text" id="salary" placeholder="120000" />
-
-    <div class="row2" style="margin-top:4px;">
-      <div>
-        <label>Country</label>
-        <input type="text" id="country" placeholder="United States" />
-      </div>
-      <div>
-        <label>Work Authorization</label>
-        <select id="workAuth">
-          <option value="">Select...</option>
-          <option value="US Citizen">US Citizen</option>
-          <option value="Green Card">Green Card</option>
-          <option value="H1B">H1B</option>
-          <option value="OPT">OPT / STEM OPT</option>
-          <option value="Other">Other</option>
-        </select>
-      </div>
-    </div>
-
-    <label>Requires Visa Sponsorship?</label>
-    <select id="requiresSponsorship">
-      <option value="false">No</option>
-      <option value="true">Yes</option>
-    </select>
-
-    <label>Default Cover Letter</label>
-    <textarea id="coverLetter" placeholder="Dear Hiring Manager,&#10;&#10;I am excited to apply for..."></textarea>
   </div>
 
-  <hr />
+</div><!-- /page -->
 
-  <!-- ── LEARNED FIELDS ──────────────────────────────────────────────── -->
-  <div class="section">
-    <h2>🧠 Saved Form Answers <span id="learned-badge" class="badge-new" style="display:none">0 new</span></h2>
-    <p class="hint" style="margin-bottom:10px;">
-      When autofill can't answer a field, it saves it here. Fill in your answers once —
-      they'll be used automatically on every future form.
-    </p>
-    <div style="display:flex; gap:8px; margin-bottom:10px; align-items:center;">
-      <button class="btn-fill-ai" id="btn-fill-ai">🤖 Fill All with AI</button>
-      <button class="btn-clear-all" id="btn-clear-all-learned">🗑 Clear All</button>
-    </div>
-    <div id="ai-fill-status" class="hint" style="margin-bottom:12px; display:none;"></div>
-    <div id="learned-fields-list">
-      <div class="no-learned">No unanswered fields yet. Run autofill on a form to populate this list.</div>
-    </div>
-  </div>
-
-  <button class="btn-save" id="btn-save">Save All Settings</button>
-  <span class="toast" id="toast">✓ Saved!</span>
-
-  <script src="options.js"></script>
+<script src="options.js"></script>
 </body>
 </html>

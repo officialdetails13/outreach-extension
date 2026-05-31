@@ -116,25 +116,36 @@ $('resumeFileInput').addEventListener('change', function () {
   const file = this.files[0];
   if (!file) return;
 
+  // Warn if file is too large for chrome.storage.local (10 MB limit; base64 adds ~33%)
+  const MAX_BYTES = 7 * 1024 * 1024; // 7 MB raw → ~9.3 MB base64, safe under 10 MB
+  if (file.size > MAX_BYTES) {
+    alert(`Resume file is too large (${(file.size/1024/1024).toFixed(1)} MB). Please use a file under 7 MB, or paste the text instead.`);
+    this.value = '';
+    return;
+  }
+
   const reader = new FileReader();
   reader.onload = e => {
-    const base64 = e.target.result; // data:...,base64data
+    const base64 = e.target.result; // data:mime;base64,xxxxx
 
-    // Also try to extract text for plain text files
+    // For plain text: also auto-fill the resume text area
     if (file.type === 'text/plain') {
       const textReader = new FileReader();
-      textReader.onload = te => {
-        $('resumeText').value = te.target.result;
-      };
+      textReader.onload = te => { $('resumeText').value = te.target.result; };
       textReader.readAsText(file);
     }
 
-    chrome.storage.local.set({
-      resumeFile: { name: file.name, type: file.type, base64 }
-    });
-
-    $('resume-filename').textContent = '📎 ' + file.name;
-    $('resume-upload-box').classList.add('has-file');
+    chrome.storage.local.set(
+      { resumeFile: { name: file.name, type: file.type, base64 } },
+      () => {
+        if (chrome.runtime.lastError) {
+          alert('Could not save resume file: ' + chrome.runtime.lastError.message + '\nTry a smaller file or paste the text instead.');
+          return;
+        }
+        $('resume-filename').textContent = '📎 ' + file.name;
+        $('resume-upload-box').classList.add('has-file');
+      }
+    );
   };
   reader.readAsDataURL(file);
 });
@@ -226,9 +237,7 @@ $('btn-clear-all-learned').addEventListener('click', () => {
   chrome.storage.local.set({ learnedAnswers: {} }, () => {
     renderLearnedFields({});
     const status = $('ai-fill-status');
-    status.textContent = '🗑 Cleared all saved answers.';
-    status.style.display = 'block';
-    setTimeout(() => { status.style.display = 'none'; }, 3000);
+    showStatus(status, '🗑 Cleared.', 'info', 3000);
   });
 });
 
@@ -239,8 +248,7 @@ $('btn-fill-ai').addEventListener('click', async () => {
 
   const apiKey = $('claudeApiKey').value.trim();
   if (!apiKey) {
-    status.textContent = '⚠️ Add your Claude API key in the Claude AI section above first.';
-    status.style.display = 'block';
+    showStatus(status, '⚠️ Add your Claude API key in the Claude AI section first.', 'warn');
     return;
   }
 
@@ -248,8 +256,7 @@ $('btn-fill-ai').addEventListener('click', async () => {
   const resumeContext = local.resumeText || buildResumeContext(local.resumeData || {});
 
   if (!resumeContext || resumeContext === 'No profile data available.') {
-    status.textContent = '⚠️ Upload your resume or paste resume text in the Resume section first.';
-    status.style.display = 'block';
+    showStatus(status, '⚠️ Paste your resume text in the Resume section first.', 'warn');
     return;
   }
 
@@ -284,8 +291,7 @@ $('btn-fill-ai').addEventListener('click', async () => {
 
   btn.disabled    = true;
   btn.textContent = '⏳ Asking Claude...';
-  status.textContent = `Parsing resume + filling ${emptyLearnedFields.length} answer${emptyLearnedFields.length !== 1 ? 's' : ''}...`;
-  status.style.display = 'block';
+  showStatus(status, `Filling ${emptyLearnedFields.length} answer${emptyLearnedFields.length !== 1 ? 's' : ''} + parsing resume...`, 'info');
 
   const prompt = `You are setting up a job application autofill system. Parse the applicant's resume and fill in their profile.
 
@@ -321,7 +327,7 @@ Respond ONLY with this exact JSON structure:
     btn.textContent = '🤖 Fill All with AI';
 
     if (response?.error) {
-      status.textContent = '❌ Claude error: ' + response.error;
+      showStatus(status, '❌ Claude error: ' + response.error, 'err');
       return;
     }
 
@@ -331,26 +337,23 @@ Respond ONLY with this exact JSON structure:
         .replace(/\s*```$/i, '');
       const result = JSON.parse(raw);
 
-      // ── Apply profile fields (only overwrite empty ones) ──
       let profileFilled = 0;
       if (result.profile) {
         Object.entries(result.profile).forEach(([key, val]) => {
           if (!val) return;
           const el = $(key);
-          if (!el) return;
-          if (el.value.trim()) return; // don't overwrite existing data
+          if (!el || el.value.trim()) return;
           el.value = val;
-          el.style.borderColor = '#7c4dff';
+          el.classList.add('profile-updated');
+          setTimeout(() => el.classList.remove('profile-updated'), 2000);
           profileFilled++;
         });
       }
 
-      // ── Apply learned answers ──
       let answersFilled = 0;
       if (result.answers) {
         result.answers.forEach(({ label, answer }) => {
           if (!answer) return;
-          // Update stored object
           if (stored[label] !== undefined) {
             if (typeof stored[label] === 'string') stored[label] = answer;
             else stored[label] = { ...stored[label], answer };
@@ -363,12 +366,18 @@ Respond ONLY with this exact JSON structure:
         renderLearnedFields(stored);
       }
 
-      status.textContent = `✅ Profile: ${profileFilled} field${profileFilled !== 1 ? 's' : ''} filled · Answers: ${answersFilled} filled — click Save All Settings to keep.`;
+      showStatus(status, `✅ Profile: ${profileFilled} filled · Answers: ${answersFilled} filled — click Save All Settings.`, 'ok');
     } catch (e) {
-      status.textContent = '❌ Could not parse Claude response. Try again.';
+      showStatus(status, '❌ Could not parse response. Try again.', 'err');
     }
   });
 });
+
+function showStatus(el, msg, type = 'info', autohide = 0) {
+  el.textContent = msg;
+  el.className = `status-msg ${type} show`;
+  if (autohide) setTimeout(() => el.classList.remove('show'), autohide);
+}
 
 function buildResumeContext(r) {
   const parts = [];
@@ -395,20 +404,17 @@ $('btn-parse-resume').addEventListener('click', async () => {
   const text   = $('resumeText').value.trim();
 
   if (!text) {
-    status.textContent = '⚠️ Paste your resume text above first.';
-    status.style.display = 'block';
+    showStatus(status, '⚠️ Paste your resume text above first.', 'warn');
     return;
   }
   if (!apiKey) {
-    status.textContent = '⚠️ Add your Claude API key in the Claude AI section first.';
-    status.style.display = 'block';
+    showStatus(status, '⚠️ Add your Claude API key in the Claude AI section first.', 'warn');
     return;
   }
 
   btn.disabled    = true;
   btn.textContent = '⏳ Parsing...';
-  status.textContent = 'Extracting profile data from resume...';
-  status.style.display = 'block';
+  showStatus(status, 'Extracting profile data from resume...', 'info');
 
   const prompt = `Extract structured profile data from this resume. Return ONLY a JSON object with these exact keys (empty string if not found):
 
@@ -438,7 +444,7 @@ Respond ONLY with the JSON object.`;
     btn.textContent = '🔍 Parse Resume → Fill Profile';
 
     if (!response || response.error) {
-      status.textContent = '❌ ' + (response?.error || 'No response. Reload the extension and try again.');
+      showStatus(status, '❌ ' + (response?.error || 'No response — reload the extension and try again.'), 'err');
       return;
     }
 
@@ -459,9 +465,9 @@ Respond ONLY with the JSON object.`;
         filled++;
       });
 
-      status.textContent = `✅ Extracted ${filled} profile fields — click Save All Settings to keep.`;
+      showStatus(status, `✅ Extracted ${filled} profile fields — click Save All Settings to keep.`, 'ok');
     } catch (e) {
-      status.textContent = '❌ Could not parse response. Try again.';
+      showStatus(status, '❌ Could not parse response. Try again.', 'err');
     }
   });
 });
