@@ -608,6 +608,7 @@ Respond ONLY with a valid JSON array matching the same order as input:
       { type: 'CLAUDE_COMPLETE', prompt, apiKey },
       response => {
         if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+        if (!response) return reject(new Error('No response from background — try reloading the extension'));
         if (response.error) return reject(new Error(response.error));
 
         try {
