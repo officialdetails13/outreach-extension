@@ -124,6 +124,81 @@ function isRequiredField(field) {
   return false;
 }
 
+// ── APPLY / SUBMIT BUTTON HELPERS ────────────────────────────────────────────
+function hasVisibleForm() {
+  return Array.from(document.querySelectorAll('form')).some(f => {
+    const inputs = f.querySelectorAll('input:not([type="hidden"]), select, textarea, [role="combobox"]');
+    return inputs.length > 0 && f.offsetParent !== null;
+  });
+}
+
+async function clickApplyButton() {
+  const RE = /\b(apply|apply now|apply for this job|quick apply|start application)\b/i;
+  const candidates = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="submit"]'))
+    .filter(el => el.offsetParent && RE.test(el.textContent.trim() || el.value || ''));
+  if (!candidates.length) return false;
+  candidates[0].click();
+  await sleep(2000);
+  return true;
+}
+
+async function clickSubmitButton() {
+  const RE = /\b(submit|submit application|send application|next|continue|save and continue)\b/i;
+  // Native submit first
+  const native = document.querySelector('button[type="submit"], input[type="submit"]');
+  if (native && native.offsetParent && !native.disabled) { native.click(); return true; }
+  // Text-matching fallback
+  const btn = Array.from(document.querySelectorAll('button, [role="button"]'))
+    .filter(el => el.offsetParent && !el.disabled && RE.test(el.textContent.trim()))
+    .sort((a, b) => {
+      // Prefer buttons closer to the bottom of the page
+      const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+      return rb.top - ra.top;
+    })[0];
+  if (btn) { btn.click(); return true; }
+  return false;
+}
+
+async function captureValidationErrors() {
+  await sleep(1200); // wait for error states to render
+
+  const errorFields = [];
+  const seen = new Set();
+
+  // aria-invalid on inputs
+  document.querySelectorAll('[aria-invalid="true"], [aria-invalid="error"]').forEach(el => {
+    if (seen.has(el) || !el.offsetParent) return;
+    seen.add(el);
+    const label = getLabel(el) || el.name || el.id;
+    if (label) errorFields.push({ el, type: getFieldType(el), label, name: el.name || el.id });
+  });
+
+  // Inputs inside wrappers with error class names
+  document.querySelectorAll([
+    '.field--error input, .field--error select, .field--error textarea',
+    '.has-error input, .has-error select',
+    '[class*="error"] input, [class*="error"] select',
+    '[class*="invalid"] input',
+  ].join(',')).forEach(el => {
+    if (seen.has(el) || !el.offsetParent) return;
+    seen.add(el);
+    const label = getLabel(el) || el.name || el.id;
+    if (label) errorFields.push({ el, type: getFieldType(el), label, name: el.name || el.id });
+  });
+
+  // Required fields that are still empty
+  document.querySelectorAll('input[required], select[required], textarea[required]').forEach(el => {
+    if (seen.has(el) || !el.offsetParent) return;
+    const empty = el.tagName === 'SELECT' ? el.value === '' || el.selectedIndex <= 0 : !el.value.trim();
+    if (!empty) return;
+    seen.add(el);
+    const label = getLabel(el) || el.name || el.id;
+    if (label) errorFields.push({ el, type: getFieldType(el), label, name: el.name || el.id });
+  });
+
+  return errorFields;
+}
+
 // ── MAIN AUTOFILL HANDLER ─────────────────────────────────────────────────────
 async function handleAutofillClick() {
   setOverlayState('loading');
@@ -135,24 +210,39 @@ async function handleAutofillClick() {
     return;
   }
 
+  // Step 0: if no form is visible, try clicking an Apply button first
+  if (!hasVisibleForm()) {
+    showToast('🔍 No form visible — looking for Apply button...', 'info');
+    const clicked = await clickApplyButton();
+    if (!clicked) {
+      showToast('⚠️ No form or Apply button found on this page.', 'warn');
+      setOverlayState('idle');
+      return;
+    }
+    showToast('✅ Clicked Apply — form loading...', 'info');
+    await sleep(500);
+  }
+
   const fields   = scanAllFields();
   const unmapped = [];
   let   filled   = 0;
 
   // Pass 1: fill from resume profile data
   for (const field of fields) {
-    // File inputs — only attach resume to resume/CV fields, not cover letter fields
+    // File inputs — whitelist: only fill inputs explicitly labeled resume/CV.
+    // Everything else (cover letter, portfolio, other docs) is left untouched.
     if (field.type === 'file') {
       const lbl = (field.label || '').toLowerCase();
+      const isResumeInput = /\b(resume|cv|curriculum.?vitae)\b/i.test(lbl) || lbl === '';
       const isCoverLetter = /cover.?letter/i.test(lbl);
-      if (!isCoverLetter && resumeFile?.base64) {
+      if (isResumeInput && !isCoverLetter && resumeFile?.base64) {
         const ok = await fillFileInput(field.el, resumeFile.base64, resumeFile.name);
         if (ok) filled++;
         else highlightFileInput(field.el);
-      } else if (!isCoverLetter) {
+      } else if (isResumeInput && !isCoverLetter) {
         highlightFileInput(field.el);
       }
-      // Cover letter file inputs are intentionally left alone
+      // All other file inputs intentionally skipped
       continue;
     }
 
@@ -228,9 +318,26 @@ async function handleAutofillClick() {
     showToast(`💡 ${claudeFields.length} field${claudeFields.length !== 1 ? 's' : ''} saved to Settings → "Saved Form Answers" (${reason}).`, 'info');
   }
 
-  const leftover = scanAllFields().filter(f => !isFieldFilled(f) && f.type !== 'file');
-  setOverlayState(leftover.length === 0 ? 'done' : 'error');
-  showToast(`✅ Filled ${filled} field${filled !== 1 ? 's' : ''}${leftover.length ? ` · ${leftover.length} saved to Settings` : ''}`, 'success');
+  // Step 4: click Submit and capture any validation errors
+  setOverlayState('loading');
+  showToast(`✅ Filled ${filled} fields — submitting...`, 'info');
+
+  const submitted = await clickSubmitButton();
+  if (submitted) {
+    const errorFields = await captureValidationErrors();
+    if (errorFields.length) {
+      await saveLearnedFields(errorFields);
+      setOverlayState('error');
+      showToast(`⚠️ ${errorFields.length} field${errorFields.length !== 1 ? 's' : ''} failed validation — saved to Settings → Needs Answers.`, 'warn');
+    } else {
+      setOverlayState('done');
+      showToast(`✅ Submitted! ${filled} fields filled.`, 'success');
+    }
+  } else {
+    const leftover = scanAllFields().filter(f => !isFieldFilled(f) && f.type !== 'file');
+    setOverlayState(leftover.length === 0 ? 'done' : 'error');
+    showToast(`✅ Filled ${filled} field${filled !== 1 ? 's' : ''}${leftover.length ? ` · ${leftover.length} need review` : ''} — no submit button found.`, 'success');
+  }
 }
 
 // ── FIELD SCANNER ─────────────────────────────────────────────────────────────
