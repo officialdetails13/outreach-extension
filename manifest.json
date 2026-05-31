@@ -11,13 +11,8 @@
   ],
   "host_permissions": [
     "https://outreach-tracker-j73i.onrender.com/*",
-    "https://*.linkedin.com/*",
-    "https://*.indeed.com/*",
-    "https://*.greenhouse.io/*",
-    "https://*.lever.co/*",
-    "https://*.ziprecruiter.com/*",
-    "https://*.myworkdayjobs.com/*",
-    "https://*.icims.com/*"
+    "https://api.anthropic.com/*",
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "background.js"
@@ -33,15 +28,7 @@
   },
   "content_scripts": [
     {
-      "matches": [
-        "https://*.linkedin.com/*",
-        "https://*.indeed.com/*",
-        "https://*.greenhouse.io/*",
-        "https://*.lever.co/*",
-        "https://*.ziprecruiter.com/*",
-        "https://*.myworkdayjobs.com/*",
-        "https://*.icims.com/*"
-      ],
+      "matches": ["https://*/*", "http://*/*"],
       "js": ["content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"

@@ -1,24 +1,116 @@
-/* content.css — injected styles for the "Add to Outreach" overlay button */
+/* content.css — injected styles: autofill button, fill animations, toast */
 
-.ot-inject-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: #7c4dff;
-  color: #fff;
-  border: none;
-  border-radius: 16px;
-  padding: 6px 14px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  box-shadow: 0 2px 8px rgba(124, 77, 255, 0.4);
-  transition: background 0.15s, transform 0.1s;
-  z-index: 9999;
+/* ── AUTOFILL OVERLAY BUTTON ──────────────────────────────────────────────── */
+#ot-autofill-btn {
+  position: fixed !important;
+  bottom: 24px !important;
+  right: 24px !important;
+  z-index: 2147483647 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 7px !important;
+  background: #7c4dff !important;
+  color: #fff !important;
+  border: none !important;
+  border-radius: 24px !important;
+  padding: 10px 18px !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  box-shadow: 0 4px 16px rgba(124, 77, 255, 0.45) !important;
+  transition: all 0.2s ease !important;
+  user-select: none !important;
+  text-decoration: none !important;
+  line-height: 1.2 !important;
 }
-.ot-inject-btn:hover {
-  background: #9c6dff;
-  transform: scale(1.03);
+
+#ot-autofill-btn:hover {
+  background: #9c6dff !important;
+  transform: translateY(-2px) !important;
+  box-shadow: 0 6px 20px rgba(124, 77, 255, 0.55) !important;
 }
-.ot-inject-btn svg { width: 12px; height: 12px; fill: currentColor; }
+
+#ot-autofill-btn.ot-loading {
+  background: #5a35cc !important;
+  cursor: wait !important;
+  animation: ot-pulse 1.2s ease-in-out infinite !important;
+}
+
+#ot-autofill-btn.ot-done {
+  background: #2d7a50 !important;
+}
+
+#ot-autofill-btn.ot-error {
+  background: #a05f00 !important;
+}
+
+.ot-btn-icon { font-size: 16px !important; }
+.ot-btn-label { white-space: nowrap !important; }
+
+@keyframes ot-pulse {
+  0%, 100% { opacity: 1; transform: translateY(0); }
+  50%       { opacity: 0.75; transform: translateY(-1px); }
+}
+
+/* ── FILLED FIELD HIGHLIGHT ──────────────────────────────────────────────── */
+.ot-filled {
+  border-color: #7c4dff !important;
+  background: #f5f0ff !important;
+  transition: border-color 0.3s ease, background 0.3s ease !important;
+}
+
+/* keep highlight subtle after a moment */
+.ot-filled:focus {
+  border-color: #7c4dff !important;
+}
+
+/* ── TOAST NOTIFICATION ───────────────────────────────────────────────────── */
+#ot-toast {
+  position: fixed !important;
+  bottom: 80px !important;
+  right: 24px !important;
+  z-index: 2147483646 !important;
+  max-width: 340px !important;
+  padding: 12px 16px !important;
+  border-radius: 8px !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  line-height: 1.4 !important;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2) !important;
+  opacity: 0 !important;
+  transform: translateY(8px) !important;
+  transition: opacity 0.25s ease, transform 0.25s ease !important;
+  pointer-events: none !important;
+}
+
+#ot-toast.ot-toast-show {
+  opacity: 1 !important;
+  transform: translateY(0) !important;
+}
+
+#ot-toast.ot-toast-success {
+  background: #1a2e1a !important;
+  color: #44dd88 !important;
+  border: 1px solid #2d5a3a !important;
+}
+
+#ot-toast.ot-toast-info {
+  background: #1a1a2e !important;
+  color: #88aaff !important;
+  border: 1px solid #2a2a5a !important;
+}
+
+#ot-toast.ot-toast-warn {
+  background: #2e1a00 !important;
+  color: #ffaa44 !important;
+  border: 1px solid #5a3a00 !important;
+}
+
+/* ── FILE INPUT HIGHLIGHT ────────────────────────────────────────────────── */
+input[type="file"].ot-file-highlight,
+.ot-file-highlight {
+  box-shadow: 0 0 0 3px rgba(124, 77, 255, 0.5) !important;
+  border-radius: 4px !important;
+}
