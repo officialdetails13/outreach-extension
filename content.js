@@ -141,15 +141,18 @@ async function handleAutofillClick() {
 
   // Pass 1: fill from resume profile data
   for (const field of fields) {
-    // File inputs — try stored resume, else highlight
+    // File inputs — only attach resume to resume/CV fields, not cover letter fields
     if (field.type === 'file') {
-      if (resumeFile?.base64) {
+      const lbl = (field.label || '').toLowerCase();
+      const isCoverLetter = /cover.?letter/i.test(lbl);
+      if (!isCoverLetter && resumeFile?.base64) {
         const ok = await fillFileInput(field.el, resumeFile.base64, resumeFile.name);
         if (ok) filled++;
         else highlightFileInput(field.el);
-      } else {
+      } else if (!isCoverLetter) {
         highlightFileInput(field.el);
       }
+      // Cover letter file inputs are intentionally left alone
       continue;
     }
 
@@ -535,12 +538,8 @@ async function fillField(field, value) {
 
 function fillText(el, value) {
   if (el.value === String(value)) return true;
-  const setter = Object.getOwnPropertyDescriptor(
-    el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
-    'value'
-  )?.set;
-  if (setter) setter.call(el, value);
-  else el.value = value;
+  triggerReactSetter(el, 'value', value);
+  el.value = value;
   el.dispatchEvent(new Event('input',  { bubbles: true }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
   el.dispatchEvent(new Event('blur',   { bubbles: true }));
@@ -549,19 +548,33 @@ function fillText(el, value) {
 }
 
 function fillSelect(el, value) {
-  // Try exact value match first
   let opt = Array.from(el.options).find(o => o.value === value);
-  // Fuzzy match on text or value
   if (!opt) opt = Array.from(el.options).find(o =>
     o.value.toLowerCase().includes(value.toLowerCase()) ||
     o.text.toLowerCase().includes(value.toLowerCase())
   );
   if (!opt) return false;
 
+  // Trigger React/Vue internal setter before setting value
+  triggerReactSetter(el, 'value', opt.value);
   el.value = opt.value;
+  el.dispatchEvent(new Event('input',  { bubbles: true }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
+  el.dispatchEvent(new Event('blur',   { bubbles: true }));
   el.classList.add('ot-filled');
   return true;
+}
+
+// Trigger React's internal synthetic event system so React-controlled
+// inputs/selects recognise the programmatic value change.
+function triggerReactSetter(el, prop, value) {
+  try {
+    const proto = el.tagName === 'SELECT'
+      ? HTMLSelectElement.prototype
+      : (el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype);
+    const descriptor = Object.getOwnPropertyDescriptor(proto, prop);
+    if (descriptor?.set) descriptor.set.call(el, value);
+  } catch { /* non-React page, ignore */ }
 }
 
 function fillRadio(field, value) {
