@@ -109,22 +109,26 @@ function isRequiredField(field) {
   const el = field.el;
   if (!el) return true;
 
-  // HTML required attribute (works for text, select, checkbox, etc.)
+  // HTML required attribute
   if (el.required) return true;
 
   // ARIA
   if (el.getAttribute('aria-required') === 'true') return true;
 
-  // For radio groups: check if any radio in the group has required
+  // For radio groups: check if any radio has required
   if (field.type === 'radio' && field.options) {
     if (field.options.some(o => o.el?.required)) return true;
   }
 
-  // Label contains an asterisk or the word "required" — visual indicator
-  const labelText = field.label || '';
-  if (/\*|✱|\brequired\b/i.test(labelText)) return true;
+  // Check the RAW surrounding text for * BEFORE cleanLabelText strips it.
+  // This catches cases like <span class="req">*</span> inside a label wrapper.
+  const surrounding = el.closest('label, fieldset, .field, .form-group, .form-item, li, [class*="field"], [class*="question"]');
+  if (surrounding && /[*✱]/.test(surrounding.innerText)) return true;
 
-  // Wrapper element has a required indicator (common in custom form libraries)
+  // Cleaned label still contains "required" keyword
+  if (/\brequired\b/i.test(field.label || '')) return true;
+
+  // Wrapper has a required CSS class or attribute
   const wrap = el.closest('[data-required="true"], [required], .required, .is-required, [class*="required"]');
   if (wrap && wrap !== el) return true;
 
@@ -443,6 +447,19 @@ async function handleAutofillClick() {
   setOverlayState('loading');
   showToast(`✅ Filled ${filled} fields — submitting...`, 'info');
 
+  // Also check required-but-unfilled before submitting
+  const preSubmitUnfilled = scanAllFields().filter(f =>
+    isRequiredField(f) && !isFieldFilled(f) && f.type !== 'file'
+  );
+  if (preSubmitUnfilled.length) {
+    highlightFailedFields(preSubmitUnfilled);
+    await saveLearnedFields(preSubmitUnfilled);
+    await logApplication('failed');
+    setOverlayState('error');
+    showToast(`⚠️ ${preSubmitUnfilled.length} required field${preSubmitUnfilled.length !== 1 ? 's' : ''} still empty — highlighted in red.`, 'warn');
+    return;
+  }
+
   const submitted = await clickSubmitButton();
   if (submitted) {
     const errorFields = await captureValidationErrors();
@@ -451,18 +468,16 @@ async function handleAutofillClick() {
       await saveLearnedFields(errorFields);
       await logApplication('failed');
       setOverlayState('error');
-      showToast(`⚠️ ${errorFields.length} field${errorFields.length !== 1 ? 's' : ''} failed — highlighted in red. Saved to Needs Answers.`, 'warn');
+      showToast(`⚠️ ${errorFields.length} field${errorFields.length !== 1 ? 's' : ''} failed validation — highlighted in red.`, 'warn');
     } else {
       await logApplication('applied');
       setOverlayState('done');
       showToast(`✅ Submitted! ${filled} fields filled. Logged to Applications.`, 'success');
     }
   } else {
-    const leftover = scanAllFields().filter(f => !isFieldFilled(f) && f.type !== 'file');
-    const status = leftover.length === 0 ? 'applied' : 'failed';
-    await logApplication(status);
-    setOverlayState(leftover.length === 0 ? 'done' : 'error');
-    showToast(`✅ Filled ${filled} field${filled !== 1 ? 's' : ''}${leftover.length ? ` · ${leftover.length} need review` : ''}. Logged to Applications.`, 'success');
+    // Submit button not found — don't log as applied, just report fill count
+    setOverlayState('done');
+    showToast(`✅ Filled ${filled} field${filled !== 1 ? 's' : ''}. No submit button found — click it manually.`, 'info');
   }
 }
 
