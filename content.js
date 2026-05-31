@@ -275,24 +275,30 @@ function getGroupLabel(radioGroup) {
 
 // ── RESUME → FIELD MAPPING ────────────────────────────────────────────────────
 const RESUME_MAP = [
-  // pattern (regex on label+name+id+autocomplete), resumeData key, transform
-  { re: /first.?name|given.?name|fname/i,        key: 'firstName' },
-  { re: /last.?name|family.?name|surname|lname/i, key: 'lastName' },
-  { re: /\bfull.?name\b/i,                        key: null, fn: r => `${r.firstName||''} ${r.lastName||''}`.trim() },
-  { re: /\bemail\b/i,                              key: 'email' },
-  { re: /phone|telephone|mobile|cell/i,            key: 'phone' },
-  { re: /city|town/i,                              key: 'city' },
-  { re: /zip|postal/i,                             key: 'zip' },
-  { re: /country/i,                               key: 'country' },
-  { re: /address|street/i,                        key: 'address' },
+  // Personal
+  { re: /first.?name|given.?name|fname/i,          key: 'firstName' },
+  { re: /last.?name|family.?name|surname|lname/i,  key: 'lastName' },
+  { re: /\bfull.?name\b/i,                          key: null, fn: r => `${r.firstName||''} ${r.lastName||''}`.trim() },
+  { re: /\bemail\b/i,                               key: 'email' },
+  { re: /phone|telephone|mobile|cell/i,             key: 'phone' },
+  { re: /city|town/i,                               key: 'city' },
+  { re: /zip|postal/i,                              key: 'zip' },
+  { re: /\bstate\b|province/i,                      key: 'state' },
+  { re: /country/i,                                 key: 'country' },
+  { re: /address|street/i,                          key: 'address' },
+  // Education
+  { re: /school|university|college|institution/i,   key: 'school' },
+  { re: /field.?of.?study|major|discipline/i,       key: 'fieldOfStudy' },
+  { re: /grad.?year|graduation.?year|class.?of/i,   key: 'gradYear' },
   // Professional
-  { re: /current.?title|job.?title|position.?title|most.?recent.?title/i, key: 'title' },
-  { re: /linkedin/i,                              key: 'linkedin' },
-  { re: /github/i,                                key: 'github' },
-  { re: /portfolio|personal.?site|website/i,      key: 'website' },
-  { re: /salary|compensation|pay/i,               key: 'salary' },
-  { re: /cover.?letter/i,                         key: 'coverLetter' },
-  { re: /years?.?of?.?exp|experience.?years/i,    key: 'yearsExp' },
+  { re: /current.?title|job.?title|most.?recent.?title|your.?title/i, key: 'title' },
+  { re: /current.?employer|current.?company|most.?recent.?employer|employer.?name/i, key: 'employer' },
+  { re: /linkedin/i,                                key: 'linkedin' },
+  { re: /github/i,                                  key: 'github' },
+  { re: /portfolio|personal.?site|website/i,        key: 'website' },
+  { re: /salary|compensation|pay/i,                 key: 'salary' },
+  { re: /cover.?letter/i,                           key: 'coverLetter' },
+  { re: /years?.?of?.?exp|experience.?years|total.?years/i, key: 'yearsExp' },
 ];
 
 // Radio/select option value mapping
@@ -324,7 +330,7 @@ const SELECT_MAP = [
     valueMap: { 'remote': ['remote', 'wfh'], 'hybrid': ['hybrid'], 'onsite': ['on.?site', 'office'] },
   },
   {
-    re: /degree|education.?level/i,
+    re: /degree|education.?level|highest.?degree/i,
     key: 'degree',
     valueMap: {
       "Bachelor's": ['bachelor', 'b.s', 'b.a', 'undergraduate'],
@@ -332,6 +338,34 @@ const SELECT_MAP = [
       'PhD':        ['phd', 'doctorate'],
       'MBA':        ['mba'],
     },
+  },
+  {
+    // years of experience select (maps numeric yearsExp to range options)
+    re: /years?.?of?.?exp|experience/i,
+    key: 'yearsExp',
+    valueMap: {
+      '0-1':  ['0', '0-1', 'less than 1', 'less than one'],
+      '1-2':  ['1', '1-2'],
+      '2-4':  ['2', '3', '2-4'],
+      '4-6':  ['4', '5', '4-6'],
+      '6-10': ['6', '7', '8', '9', '6-10'],
+      '10+':  ['10', '11', '12', '15', '20', '10+', '10 plus'],
+    },
+  },
+  {
+    re: /willing.?to.?relocate|relocation/i,
+    value: 'no',
+    valueMap: { 'yes': ['yes', 'true'], 'no': ['no', 'false'], 'maybe': ['open', 'maybe', 'consider'] },
+  },
+  {
+    re: /travel/i,
+    value: 'minimal',
+    valueMap: { 'yes': ['yes', '25'], 'minimal': ['minimal', 'occasional'], 'no': ['no', 'none'] },
+  },
+  {
+    re: /referral|how.?did.?you.?hear|source/i,
+    value: 'linkedin',
+    valueMap: { 'linkedin': ['linkedin'], 'indeed': ['indeed'], 'other': ['other'] },
   },
 ];
 

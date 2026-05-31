@@ -112,6 +112,14 @@
       cursor: pointer; float: right; margin-top: -2px;
     }
     .btn-clear-learned:hover { background: #2e1a1a; }
+    .btn-fill-ai {
+      background: #1a1a2e; color: #c8b4ff;
+      border: 1px solid #4a3a88; border-radius: 6px;
+      padding: 8px 16px; font-size: 12px; font-weight: 600;
+      cursor: pointer; transition: all 0.15s; margin-bottom: 10px;
+    }
+    .btn-fill-ai:hover { background: #2a1a4a; border-color: #7c4dff; }
+    .btn-fill-ai:disabled { opacity: 0.5; cursor: not-allowed; }
   </style>
 </head>
 <body>
@@ -183,8 +191,25 @@
     <label>Current / Target Job Title</label>
     <input type="text" id="title" placeholder="Software Engineer" />
 
+    <label>Current Employer</label>
+    <input type="text" id="employer" placeholder="e.g. Google" />
+
     <label>Years of Experience</label>
     <input type="text" id="yearsExp" placeholder="3" />
+
+    <div class="row2">
+      <div>
+        <label>Field of Study / Major</label>
+        <input type="text" id="fieldOfStudy" placeholder="e.g. Computer Science" />
+      </div>
+      <div>
+        <label>Graduation Year</label>
+        <input type="text" id="gradYear" placeholder="2022" />
+      </div>
+    </div>
+
+    <label>State / Province</label>
+    <input type="text" id="state" placeholder="New York" />
 
     <label>Highest Degree</label>
     <select id="degree">
@@ -244,10 +269,12 @@
   <!-- ── LEARNED FIELDS ──────────────────────────────────────────────── -->
   <div class="section">
     <h2>🧠 Saved Form Answers <span id="learned-badge" class="badge-new" style="display:none">0 new</span></h2>
-    <p class="hint" style="margin-bottom:14px;">
+    <p class="hint" style="margin-bottom:10px;">
       When autofill can't answer a field, it saves it here. Fill in your answers once —
       they'll be used automatically on every future form.
     </p>
+    <button class="btn-fill-ai" id="btn-fill-ai">🤖 Fill All with AI</button>
+    <div id="ai-fill-status" class="hint" style="margin-bottom:12px; display:none;"></div>
     <div id="learned-fields-list">
       <div class="no-learned">No unanswered fields yet. Run autofill on a form to populate this list.</div>
     </div>

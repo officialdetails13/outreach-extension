@@ -1,10 +1,12 @@
 // options.js — load/save extension settings
 
 const RESUME_FIELDS = [
-  'firstName','lastName','email','phone','city','zip','address',
-  'title','yearsExp','linkedin','github','website','salary',
-  'country','workAuth','requiresSponsorship','coverLetter',
-  'degree','school',
+  'firstName','lastName','email','phone',
+  'address','city','state','zip','country',
+  'title','employer','yearsExp',
+  'school','fieldOfStudy','gradYear',
+  'linkedin','github','website','salary',
+  'workAuth','requiresSponsorship','coverLetter','degree',
 ];
 
 function $(id) { return document.getElementById(id); }
@@ -133,6 +135,112 @@ function escHtml(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+// ── FILL LEARNED FIELDS WITH AI ───────────────────────────────────────────────
+$('btn-fill-ai').addEventListener('click', async () => {
+  const btn    = $('btn-fill-ai');
+  const status = $('ai-fill-status');
+
+  // Collect empty labels from current DOM (includes unsaved ones)
+  const emptyFields = [];
+  document.querySelectorAll('.learned-answer').forEach(ta => {
+    if (!ta.value.trim()) emptyFields.push(ta.dataset.label);
+  });
+
+  // Also include any stored empty fields not yet rendered
+  const stored = await new Promise(r => chrome.storage.local.get(['learnedAnswers'], d => r(d.learnedAnswers || {})));
+  Object.entries(stored).forEach(([label, val]) => {
+    if (!val && !emptyFields.includes(label)) emptyFields.push(label);
+  });
+
+  if (!emptyFields.length) {
+    status.textContent = '✅ All fields already have answers!';
+    status.style.display = 'block';
+    return;
+  }
+
+  const apiKey = $('claudeApiKey').value.trim();
+  if (!apiKey) {
+    status.textContent = '⚠️ Add your Claude API key above first.';
+    status.style.display = 'block';
+    return;
+  }
+
+  btn.disabled    = true;
+  btn.textContent = '⏳ Asking Claude...';
+  status.textContent = `Filling ${emptyFields.length} field${emptyFields.length !== 1 ? 's' : ''}...`;
+  status.style.display = 'block';
+
+  // Build resume context from stored data
+  const local = await new Promise(r => chrome.storage.local.get(['resumeText','resumeData'], r));
+  const resumeContext = local.resumeText || buildResumeContext(local.resumeData || {});
+
+  const fieldList = emptyFields.map(label => ({ label, type: 'textarea' }));
+  const prompt = `You are helping pre-fill a job application answer bank for an applicant.
+
+APPLICANT PROFILE:
+${resumeContext}
+
+For each question below, provide a concise, professional answer the applicant can use on job applications.
+- Short factual fields (salary, city, etc): just the value
+- Essay/behavioral questions: 2-4 professional sentences using STAR method where relevant
+- For option fields with listed choices: pick the most appropriate option text exactly
+
+FIELDS (respond as JSON array in same order):
+${JSON.stringify(fieldList)}
+
+Respond ONLY with valid JSON: [{"label":"...","answer":"..."}]`;
+
+  chrome.runtime.sendMessage({ type: 'CLAUDE_COMPLETE', prompt, apiKey }, response => {
+    btn.disabled    = false;
+    btn.textContent = '🤖 Fill All with AI';
+
+    if (response.error) {
+      status.textContent = '❌ Claude error: ' + response.error;
+      return;
+    }
+
+    try {
+      let raw = response.text.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/i,'');
+      const answers = JSON.parse(raw);
+      let filled = 0;
+
+      answers.forEach(({ label, answer }) => {
+        if (!answer) return;
+        // Fill rendered textareas
+        const ta = document.querySelector(`.learned-answer[data-label="${label.replace(/"/g,'&quot;')}"]`);
+        if (ta) { ta.value = answer; filled++; }
+        // Also update stored object so it persists even if not rendered
+        if (stored[label] !== undefined) stored[label] = answer;
+      });
+
+      // Save Claude answers to storage immediately
+      chrome.storage.local.set({ learnedAnswers: stored });
+      // Re-render with filled values
+      renderLearnedFields(stored);
+      status.textContent = `✅ Filled ${filled} field${filled !== 1 ? 's' : ''} — review and click Save All Settings.`;
+    } catch (e) {
+      status.textContent = '❌ Could not parse Claude response. Try again.';
+    }
+  });
+});
+
+function buildResumeContext(r) {
+  const parts = [];
+  if (r.firstName || r.lastName) parts.push(`Name: ${(r.firstName||'')} ${(r.lastName||'')}`.trim());
+  if (r.email)     parts.push(`Email: ${r.email}`);
+  if (r.phone)     parts.push(`Phone: ${r.phone}`);
+  if (r.title)     parts.push(`Current Title: ${r.title}`);
+  if (r.employer)  parts.push(`Current Employer: ${r.employer}`);
+  if (r.yearsExp)  parts.push(`Years of Experience: ${r.yearsExp}`);
+  if (r.city)      parts.push(`Location: ${r.city}${r.state ? ', '+r.state : ''}${r.country ? ', '+r.country : ''}`);
+  if (r.degree)    parts.push(`Education: ${r.degree}${r.fieldOfStudy ? ' in '+r.fieldOfStudy : ''}${r.school ? ' from '+r.school : ''}`);
+  if (r.workAuth)  parts.push(`Work Authorization: ${r.workAuth}`);
+  if (r.linkedin)  parts.push(`LinkedIn: ${r.linkedin}`);
+  if (r.salary)    parts.push(`Expected Salary: ${r.salary}`);
+  if (r.coverLetter) parts.push(`\nBackground:\n${r.coverLetter}`);
+  return parts.join('\n') || 'No profile data available.';
 }
 
 // ── SAVE ──────────────────────────────────────────────────────────────────────
