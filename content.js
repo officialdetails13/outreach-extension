@@ -362,10 +362,14 @@ async function handleAutofillClick() {
       const isCoverLetter = /cover.?letter/i.test(lbl);
       if (isResumeInput && !isCoverLetter && resumeFile?.base64) {
         const ok = await fillFileInput(field.el, resumeFile.base64, resumeFile.name);
-        if (ok) filled++;
-        else highlightFileInput(field.el);
+        if (ok) {
+          filled++;
+        } else {
+          // Hidden file input couldn't be set — find and click the Attach button
+          clickAttachButton(field.el) || highlightFileInput(field.el);
+        }
       } else if (isResumeInput && !isCoverLetter) {
-        highlightFileInput(field.el);
+        clickAttachButton(field.el) || highlightFileInput(field.el);
       }
       // All other file inputs intentionally skipped
       continue;
@@ -667,7 +671,7 @@ const RESUME_MAP = [
   { re: /linkedin/i,                                key: 'linkedin' },
   { re: /github/i,                                  key: 'github' },
   { re: /portfolio|personal.?site|website/i,        key: 'website' },
-  { re: /salary|compensation|pay/i,                 key: 'salary' },
+  { re: /salary|compensation|pay|salary.?expect/i,  key: 'salary' },
   { re: /cover.?letter/i,                           key: 'coverLetter' },
   { re: /years?.?of?.?exp|experience.?years|total.?years/i, key: 'yearsExp' },
 ];
@@ -686,9 +690,33 @@ const SELECT_MAP = [
     },
   },
   {
-    re: /sponsor|sponsorship/i,
+    // Greenhouse phrasing: "Do you now or in the future require sponsorship?"
+    re: /sponsor|sponsorship|require.?visa/i,
     key: 'requiresSponsorship',
     valueMap: { 'true': ['yes', 'true', '1'], 'false': ['no', 'false', '0'] },
+  },
+  {
+    // Greenhouse: "Are you authorized to work in the country of the job?"
+    re: /authorized.?to.?work|legally.?authorized|work.?authoriz|eligible.?to.?work/i,
+    key: 'workAuth',
+    valueMap: {
+      'US Citizen': ['citizen', 'us_citizen', 'yes'],
+      'Green Card': ['green_card', 'permanent'],
+      'H1B':        ['h1b', 'h-1b'],
+      'OPT':        ['opt'],
+    },
+  },
+  {
+    // "Are you 18 years of age or older?"
+    re: /18.?years|years.?of.?age|legal.?age/i,
+    value: 'Yes',
+    valueMap: { 'Yes': ['yes', 'true', '1'], 'No': ['no', 'false', '0'] },
+  },
+  {
+    // "I would like to receive updates via SMS"
+    re: /sms|text.?message|receive.?update/i,
+    value: 'No',
+    valueMap: { 'Yes': ['yes'], 'No': ['no'] },
   },
   {
     re: /employment.?type|work.?type|job.?type/i,
@@ -828,13 +856,14 @@ async function fillField(field, value) {
 
 function fillText(el, value) {
   if (el.value === String(value)) return true;
-  // Focus first — React and Vue track focus state for validation
   el.focus();
   el.dispatchEvent(new Event('focus', { bubbles: true }));
+  // Use native prototype setter to bypass React's read-only value trap
   triggerReactSetter(el, 'value', value);
   el.value = value;
-  el.dispatchEvent(new Event('input',  { bubbles: true }));
-  el.dispatchEvent(new Event('change', { bubbles: true }));
+  // InputEvent with inputType is required for React 17+ controlled inputs
+  el.dispatchEvent(new InputEvent('input',  { bubbles: true, cancelable: true, inputType: 'insertText', data: String(value) }));
+  el.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
   el.dispatchEvent(new Event('blur',   { bubbles: true }));
   el.classList.add('ot-filled');
   return true;
@@ -1034,6 +1063,23 @@ async function fillFileInput(el, base64, fileName) {
     el.classList.add('ot-filled');
     return el.files.length > 0; // verify it actually stuck
   } catch { return false; }
+}
+
+function clickAttachButton(fileEl) {
+  // Walk up from the hidden file input to find the Attach/Upload button
+  let node = fileEl.parentElement;
+  for (let i = 0; i < 6 && node; i++, node = node.parentElement) {
+    const btn = Array.from(node.querySelectorAll('button, a, [role="button"]'))
+      .find(el => el.offsetParent && /\b(attach|upload|choose|browse|select file)\b/i.test(el.textContent.trim()));
+    if (btn) {
+      btn.style.outline = '3px solid #7c4dff';
+      btn.style.outlineOffset = '3px';
+      btn.title = '📎 Click here to attach your resume';
+      showToast('📎 Click the highlighted "Attach" button to upload your resume.', 'info');
+      return true;
+    }
+  }
+  return false;
 }
 
 function highlightFileInput(el) {
