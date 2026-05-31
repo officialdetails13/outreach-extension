@@ -477,44 +477,42 @@ $('btn-update-profile').addEventListener('click', () => {
   const status = $('ai-fill-status');
 
   chrome.storage.local.get(['learnedAnswers', 'resumeData'], d => {
-    const learned    = d.learnedAnswers || {};
-    const resumeData = d.resumeData    || {};
-    let mapped = 0, extended = 0;
+    const learned        = d.learnedAnswers || {};
+    const resumeData     = d.resumeData    || {};
+    const remaining      = {}; // fields that had no answer — keep them
+    let saved = 0;
 
     Object.entries(learned).forEach(([label, val]) => {
       const answer = typeof val === 'string' ? val : val?.answer;
-      if (!answer || !label) return;
-
-      // 1. Feed into named profile input if label matches a known field
-      const before = Object.fromEntries(RESUME_FIELDS.map(f => [f, $(f)?.value]));
-      applyAnswerToProfile(label, answer);
-      const changed = RESUME_FIELDS.some(f => $(f)?.value !== before[f]);
-      if (changed) mapped++;
-
-      // 2. Always store by exact label in resumeData for exact-match autofill
-      if (!resumeData[label]) {
-        resumeData[label] = answer;
-        extended++;
-      } else {
-        resumeData[label] = answer; // overwrite with latest answer
+      if (!answer || !label) {
+        remaining[label] = val; // unanswered — keep in the list
+        return;
       }
+
+      // Feed into named profile input if a match exists
+      applyAnswerToProfile(label, answer);
+
+      // Store by exact label for future autofill
+      resumeData[label] = answer;
+      saved++;
+      // answered fields are NOT added to remaining — they disappear from the list
     });
 
-    // Re-collect all profile inputs after the mapping above
+    // Re-collect named profile inputs after mapping
     RESUME_FIELDS.forEach(f => {
       const el = $(f);
       if (el) resumeData[f] = el.value;
     });
 
-    chrome.storage.local.set({ resumeData }, () => {
-      const total = Object.keys(learned).filter(l => {
-        const v = learned[l];
-        return typeof v === 'string' ? v : v?.answer;
-      }).length;
+    chrome.storage.local.set({ resumeData, learnedAnswers: remaining }, () => {
+      renderLearnedFields(remaining);
       showStatus(
         status,
-        `✅ Profile updated — ${mapped} named field${mapped !== 1 ? 's' : ''} + ${extended} label-keyed entries added (${total} total answers stored).`,
-        'ok', 5000
+        saved
+          ? `✅ ${saved} answer${saved !== 1 ? 's' : ''} added to profile and removed from this list.`
+          : '⚠️ No answered fields found — fill in some answers first.',
+        saved ? 'ok' : 'warn',
+        5000
       );
     });
   });
