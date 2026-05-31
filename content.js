@@ -79,7 +79,7 @@ function setOverlayState(state) {
 async function handleAutofillClick() {
   setOverlayState('loading');
 
-  const { resumeData, claudeApiKey, resumeFile, resumeText, learnedAnswers } = await getStorage();
+  const { resumeData, claudeApiKey, claudeEnabled, resumeFile, resumeText, learnedAnswers } = await getStorage();
   if (!resumeData || !Object.keys(resumeData).length) {
     showToast('⚠️ No profile data. Open extension → Settings and fill in your profile first.', 'warn');
     setOverlayState('idle');
@@ -139,9 +139,9 @@ async function handleAutofillClick() {
     await sleep(30);
   }
 
-  // Pass 3: Claude for anything still unmapped
+  // Pass 3: Claude for anything still unmapped (only if enabled)
   const claudeFields = stillUnmapped.filter(f => f.type !== 'file' && f.type !== 'checkbox');
-  if (claudeFields.length && claudeApiKey) {
+  if (claudeFields.length && claudeEnabled && claudeApiKey) {
     setOverlayState('claude');
     try {
       const resumeContext = resumeText || buildResumeSummary(resumeData);
@@ -168,9 +168,9 @@ async function handleAutofillClick() {
       await saveLearnedFields(claudeFields);
     }
   } else if (claudeFields.length) {
-    // No API key — save all unmapped fields for user to answer in Settings
     await saveLearnedFields(claudeFields);
-    showToast(`💡 ${claudeFields.length} fields saved to Settings → "Saved Form Answers". Fill them once to use forever.`, 'info');
+    const reason = !claudeEnabled ? 'Claude AI is disabled' : 'no API key set';
+    showToast(`💡 ${claudeFields.length} field${claudeFields.length !== 1 ? 's' : ''} saved to Settings → "Saved Form Answers" (${reason}).`, 'info');
   }
 
   const leftover = scanAllFields().filter(f => !isFieldFilled(f) && f.type !== 'file');
@@ -687,10 +687,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 async function getStorage() {
   return new Promise(resolve => {
     chrome.storage.local.get({
-      resumeData: {},
-      claudeApiKey: '',
-      resumeFile: null,
-      resumeText: '',
+      resumeData:     {},
+      claudeApiKey:   '',
+      claudeEnabled:  true,
+      resumeFile:     null,
+      resumeText:     '',
       learnedAnswers: {},
     }, resolve);
   });
