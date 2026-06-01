@@ -89,6 +89,19 @@ function isVisible(el) {
   } catch { return false; }
 }
 
+// Deep query restricted to a subtree (root's light + shadow descendants).
+function deepWithin(root, selector) {
+  const out = [], seen = new Set();
+  const visit = node => {
+    let m; try { m = node.querySelectorAll(selector); } catch { m = []; }
+    m.forEach(x => { if (!seen.has(x)) { seen.add(x); out.push(x); } });
+    let all; try { all = node.querySelectorAll('*'); } catch { all = []; }
+    all.forEach(e => { if (e.shadowRoot) visit(e.shadowRoot); });
+  };
+  visit(root);
+  return out;
+}
+
 // closest() that crosses shadow boundaries (walks up through host elements).
 function closestDeep(el, selector) {
   let node = el;
@@ -219,6 +232,16 @@ function isRequiredField(field) {
   // Wrapper has a required CSS class or attribute
   const wrap = el.closest('[data-required="true"], [required], .required, .is-required, [class*="required"]');
   if (wrap && wrap !== el) return true;
+
+  // Cross-shadow owner marks it required (SmartRecruiters spl-checkbox: the "*" is
+  // in the custom element's shadow, not reachable via closest()).
+  if (el.id) {
+    for (const root of deepRoots()) {
+      if (!root.host) continue;
+      let lbl; try { lbl = root.querySelector(`label[for="${CSS.escape(el.id)}"]`); } catch { continue; }
+      if (lbl && /[*✱]/.test(root.host.innerText || '')) return true;
+    }
+  }
 
   return false;
 }
@@ -758,6 +781,31 @@ function scanAllFields() {
     });
   });
 
+  // ── Custom ARIA radio groups (no native <input type="radio">) ─────────────────
+  // SmartRecruiters spl-radio-group, design-system radios, etc.: the options are
+  // [role="radio"] / spl-radio elements with a `label`/aria-label, not inputs.
+  deepQueryAll('spl-radio-group, [role="radiogroup"]').forEach(group => {
+    if (seen.has(group) || !isVisible(group)) return;
+    const radios = deepWithin(group, '[role="radio"], spl-radio').filter(r => isVisible(r) && !seen.has(r));
+    if (radios.length < 2) return;          // need real options; skip empty wrappers
+    seen.add(group);
+    radios.forEach(r => seen.add(r));
+    const slot = group.querySelector?.('[slot*="label"]');
+    const label = (slot && slot.innerText.trim()) || getLabel(group) || group.getAttribute('aria-label') || '';
+    fields.push({
+      el: radios[0],
+      type: 'radio',
+      name: group.id || group.getAttribute('name') || label,
+      label: cleanLabelText(label),
+      options: radios.map(r => ({
+        el: r,
+        value: r.getAttribute('value') || '',
+        text: (r.getAttribute('label') || r.getAttribute('aria-label') || r.textContent || '').replace(/\s+/g, ' ').trim()
+              || (r.id && (document.querySelector(`label[for="${CSS.escape(r.id)}"]`)?.innerText || '')).trim(),
+      })),
+    });
+  });
+
   return fields;
 }
 
@@ -785,7 +833,22 @@ function getLabel(el) {
   if (el.id) {
     let explicit = null;
     try { explicit = scope.querySelector(`label[for="${CSS.escape(el.id)}"]`); } catch {}
-    if (explicit && explicit.innerText.trim()) return cleanLabelText(explicit.innerText);
+    if (explicit && cleanLabelText(explicit.innerText)) return cleanLabelText(explicit.innerText);
+  }
+
+  // 1b. Cross-shadow <label for>: SmartRecruiters spl-checkbox keeps the real
+  //     <input> in light DOM but its <label for> inside the component's shadow,
+  //     where the label's own text is just "*" and the real text is the host's
+  //     slotted content. Find the owning host and use its rendered innerText.
+  if (el.id) {
+    for (const root of deepRoots()) {
+      if (root === scope || !root.host) continue;
+      let lbl; try { lbl = root.querySelector(`label[for="${CSS.escape(el.id)}"]`); } catch { continue; }
+      if (lbl) {
+        const t = cleanLabelText(root.host.innerText);
+        if (t) return t;
+      }
+    }
   }
 
   // 2. aria-label / aria-labelledby
@@ -950,8 +1013,22 @@ const SELECT_MAP = [
     valueMap: { 'Yes': ['yes', 'authorized', 'eligible', 'i am', 'true'], 'No': ['no', 'not', 'false'] },
   },
   {
-    // "Have you previously been employed / performed work here?" — No
-    re: /previous(ly)?.*(employ|work|perform)|prior.*(employ|work)|currently.*employ|perform(ed)?.*work.*for|worked.*(here|for)|former.*employee/i,
+    // "Are you a current employee / have you previously performed work here?" — No
+    re: /previous(ly)?.*(employ|work|perform)|prior.*(employ|work)|current(ly)?.*employ|are you.*current.*employee|perform(ed)?.*work.*for|worked.*(here|for)|former.*employee/i,
+    value: 'No',
+    valueMap: { 'Yes': ['yes', 'true'], 'No': ['no', 'false'] },
+  },
+  {
+    // "Do you currently hold a visa (incl. student visa) to work in the US?" — No.
+    // SAFETY: consistent with the sponsorship=No / authorized=Yes stance (not on a
+    // sponsored visa). Never claims citizenship/PR.
+    re: /hold a.*visa|currently hold.*visa|do you.*hold.*visa/i,
+    value: 'No',
+    valueMap: { 'Yes': ['yes', 'true'], 'No': ['no', 'false'] },
+  },
+  {
+    // "Are you bound by confidentiality / non-disclosure / non-compete agreements?" — No
+    re: /bound by|non.?compete|non.?disclosure|\bnda\b|restrictive covenant|confidentiality.*(agreement|obligation)/i,
     value: 'No',
     valueMap: { 'Yes': ['yes', 'true'], 'No': ['no', 'false'] },
   },
@@ -1251,7 +1328,7 @@ function pressKey(el, key, keyCode) {
 // we select the "decline to self-identify" option — we never fabricate these, and
 // declining is the option the form itself offers for exactly this case.
 const DEMOGRAPHIC_RE = /pronoun|gender|sexual.?orientation|\borientation\b|transgender|\brace\b|ethnic|hispanic|latin[oax]|veteran|disab|lgbt|self.?identif|identify.?with|demographic|national.?origin/i;
-const DECLINE_RE     = /decline|prefer.?not|don.?t.?wish|do.?not.?wish|not.?to.?(?:answer|say|disclose|identify|specify)|choose.?not|rather.?not|wish.?not|i.?prefer.?not|unspecified|not.?listed|no.?response/i;
+const DECLINE_RE     = /decline|prefer.?not|don.?t.?wish|do.?not.?wish|don.?t.?want|do.?not.?want|not.?to.?(?:answer|say|disclose|identify|specify)|choose.?not|rather.?not|wish.?not|i.?prefer.?not|unspecified|not.?listed|no.?response/i;
 const DECLINE_TOKEN  = ' decline';
 
 function isDemographicField(field) {
@@ -1490,18 +1567,23 @@ function triggerReactSetter(el, prop, value) {
   } catch { /* non-React page, ignore */ }
 }
 
-function fillRadio(field, value) {
-  const target = field.options.find(o =>
-    o.value === value ||
-    o.value.toLowerCase().includes(value.toLowerCase()) ||
-    o.text.toLowerCase().includes(value.toLowerCase())
-  );
+async function fillRadio(field, value) {
+  const v = String(value).toLowerCase();
+  const opt = o => (o.text || '').toLowerCase();
+  const target =
+    field.options.find(o => o.value.toLowerCase() === v || opt(o) === v) ||
+    field.options.find(o => opt(o).includes(v) || (o.value && o.value.toLowerCase().includes(v)));
   if (!target) return false;
 
-  target.el.checked = true;
-  target.el.dispatchEvent(new Event('change', { bubbles: true }));
-  target.el.dispatchEvent(new Event('click',  { bubbles: true }));
-  target.el.classList.add('ot-filled');
+  if (target.el.tagName === 'INPUT') {
+    target.el.checked = true;
+    target.el.dispatchEvent(new Event('change', { bubbles: true }));
+    target.el.dispatchEvent(new Event('click',  { bubbles: true }));
+  } else {
+    // Custom role="radio" web component (SmartRecruiters spl-radio) — select by click.
+    await nativeClick(target.el);
+  }
+  target.el.classList && target.el.classList.add('ot-filled');
   return true;
 }
 
@@ -1603,6 +1685,12 @@ function comboCommittedValue(field) {
 
 function validateSelectableField(field) {
   if (field.type === 'radio') {
+    // Custom role="radio" groups (spl-radio): check the options' state directly.
+    if (field.options && field.options.length) {
+      return field.options.some(o => o.el && (o.el.tagName === 'INPUT'
+        ? o.el.checked
+        : o.el.getAttribute('aria-checked') === 'true'));
+    }
     const root = field.el?.getRootNode?.();
     const scope = root && root.querySelector ? root : document;
     return !!scope.querySelector(`input[type="radio"][name="${CSS.escape(field.name)}"]:checked`);
