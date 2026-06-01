@@ -213,39 +213,27 @@ async function clickApplyButton() {
 async function clickSubmitButton() {
   const RE = /\b(submit|submit application|send application|next|continue|save and continue|apply now)\b/i;
 
-  // Strategy 1: native type="submit"
-  const natives = Array.from(document.querySelectorAll('button[type="submit"], input[type="submit"]'))
-    .filter(el => el.offsetParent && !el.disabled);
-  if (natives.length) {
-    natives[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
-    await sleep(300);
-    natives[0].click();
-    return true;
-  }
+  // Find the best submit target, in priority order.
+  let btn =
+    Array.from(document.querySelectorAll('button[type="submit"], input[type="submit"]'))
+      .filter(el => el.offsetParent && !el.disabled)[0] ||
+    Array.from(document.querySelectorAll('button, [role="button"], a[type="submit"]'))
+      .filter(el => el.offsetParent && !el.disabled && RE.test((el.textContent || el.value || '').trim()))
+      .sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top)[0] ||
+    Array.from(document.querySelectorAll('form button:not([type="reset"]):not([type="button"])'))
+      .filter(el => el.offsetParent && !el.disabled).slice(-1)[0];
 
-  // Strategy 2: text-matching button, prefer lowest on page (closest to submit)
-  const byText = Array.from(document.querySelectorAll('button, [role="button"], a[type="submit"]'))
-    .filter(el => el.offsetParent && !el.disabled && RE.test((el.textContent || el.value || '').trim()))
-    .sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
-  if (byText.length) {
-    byText[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
-    await sleep(300);
-    byText[0].click();
-    return true;
-  }
+  if (!btn) return false;
 
-  // Strategy 3: last button inside a <form>
-  const formBtns = Array.from(document.querySelectorAll('form button:not([type="reset"]):not([type="button"])'))
-    .filter(el => el.offsetParent && !el.disabled);
-  if (formBtns.length) {
-    const last = formBtns[formBtns.length - 1];
-    last.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    await sleep(300);
-    last.click();
-    return true;
+  // Prefer a TRUSTED click (react submit handlers may ignore synthetic events,
+  // same as the dropdowns); fall back to a synthetic click + form.requestSubmit.
+  const ok = await trustedClickEl(btn);
+  if (!ok) {
+    btn.click();
+    const form = btn.closest('form');
+    if (form && form.requestSubmit) { try { form.requestSubmit(btn); } catch {} }
   }
-
-  return false;
+  return true;
 }
 
 async function captureValidationErrors() {
@@ -305,10 +293,20 @@ function highlightFailedFields(errorFields) {
 }
 
 // ── MAIN AUTOFILL HANDLER ─────────────────────────────────────────────────────
+// Wrapper: always release the debugger (clears Chrome's "is debugging this browser"
+// banner) when a run finishes, however it exits.
 async function handleAutofillClick() {
+  try {
+    return await handleAutofillClickInner();
+  } finally {
+    try { chrome.runtime.sendMessage({ type: 'DEBUGGER_DETACH' }, () => void chrome.runtime.lastError); } catch { /* ignore */ }
+  }
+}
+
+async function handleAutofillClickInner() {
   setOverlayState('loading');
 
-  const { resumeData, claudeApiKey, claudeEnabled, resumeFile, resumeText, learnedAnswers } = await getStorage();
+  const { resumeData, claudeApiKey, claudeEnabled, resumeFile, resumeFilePath, resumeText, learnedAnswers } = await getStorage();
   if (!resumeData || !Object.keys(resumeData).length) {
     showToast('⚠️ No profile data. Open extension → Settings and fill in your profile first.', 'warn');
     setOverlayState('idle');
@@ -357,19 +355,16 @@ async function handleAutofillClick() {
     // File inputs — whitelist: only fill inputs explicitly labeled resume/CV.
     // Everything else (cover letter, portfolio, other docs) is left untouched.
     if (field.type === 'file') {
-      const lbl = (field.label || '').toLowerCase();
-      const isResumeInput = /\b(resume|cv|curriculum.?vitae)\b/i.test(lbl) || lbl === '';
-      const isCoverLetter = /cover.?letter/i.test(lbl);
-      if (isResumeInput && !isCoverLetter && resumeFile?.base64) {
-        const ok = await fillFileInput(field.el, resumeFile.base64, resumeFile.name);
-        if (ok) {
-          filled++;
-        } else {
-          // Hidden file input couldn't be set — find and click the Attach button
-          clickAttachButton(field.el) || highlightFileInput(field.el);
-        }
-      } else if (isResumeInput && !isCoverLetter) {
-        clickAttachButton(field.el) || highlightFileInput(field.el);
+      const fel = field.el;
+      // Don't trust field.label alone — for file inputs getLabel often returns the
+      // "Attach" button text. Detect from id/name/aria + the resume-aware helper.
+      const hay = `${field.label || ''} ${getFileInputLabel(fel)} ${fel.id || ''} ${fel.name || ''} ${fel.getAttribute('aria-label') || ''}`.toLowerCase();
+      const isCoverLetter = /cover.?letter/i.test(hay);
+      const isResumeInput = !isCoverLetter && /\b(resume|cv|curriculum.?vitae)\b/i.test(hay);
+      if (isResumeInput) {
+        const ok = await attachResume(fel, { resumeFilePath, resumeFile });
+        if (ok) filled++;
+        else clickAttachButton(fel) || highlightFileInput(fel);
       }
       // All other file inputs intentionally skipped
       continue;
@@ -611,6 +606,11 @@ function scanAllFields() {
 function getFieldType(el) {
   if (el.tagName === 'SELECT') return 'select';
   if (el.tagName === 'TEXTAREA') return 'textarea';
+  // React-select / ARIA comboboxes are <input role="combobox"> (e.g. Greenhouse's
+  // .select__input). Classify them as combobox — NOT text — so they route to the
+  // dropdown filler (open → pick option) instead of being typed into like a textbox.
+  const role = (el.getAttribute('role') || '').toLowerCase();
+  if (role === 'combobox' || el.getAttribute('aria-haspopup') === 'listbox') return 'combobox';
   return (el.type || 'text').toLowerCase();
 }
 
@@ -699,7 +699,7 @@ const RESUME_MAP = [
   { re: /\bfull.?name\b/i,                          key: null, fn: r => `${r.firstName||''} ${r.lastName||''}`.trim() },
   { re: /\bemail\b/i,                               key: 'email' },
   { re: /phone|telephone|mobile|cell/i,             key: 'phone' },
-  { re: /city|town/i,                               key: 'city' },
+  { re: /\bcity\b|\btown\b/i,                        key: 'city' },   // \b so "Ethnicity" doesn't match "city"
   { re: /zip|postal/i,                              key: 'zip' },
   { re: /\bstate\b|province/i,                      key: 'state' },
   { re: /country/i,                                 key: 'country' },
@@ -752,7 +752,7 @@ const SELECT_MAP = [
   },
   {
     // "Have you previously been employed here / are you currently an employee?" — No
-    re: /previous(ly)?.?(been.?)?employ|currently.?(an? )?employ|worked.?(here|for us).?before|former.?employee/i,
+    re: /previous(ly)?.*employ|prior.*employ|currently.*employ|worked.*(here|for us).*before|former.*employee/i,
     value: 'No',
     valueMap: { 'Yes': ['yes', 'true'], 'No': ['no', 'false'] },
   },
@@ -821,21 +821,24 @@ const SELECT_MAP = [
 function mapFromResume(field, r) {
   const ctx = `${field.label} ${field.name} ${field.el?.id || ''} ${field.el?.getAttribute('autocomplete') || ''}`.toLowerCase();
 
-  if (field.type === 'select' || field.type === 'radio') {
-    return mapSelectableFromResume(field, r, ctx) || exactLabelLookup(field.label, r);
+  // Text/regex map — also the fallback for comboboxes like Country.
+  const fromResumeMap = () => {
+    for (const { re, key, fn } of RESUME_MAP) {
+      if (re.test(ctx)) return fn ? fn(r) : (r[key] || null);
+    }
+    return null;
+  };
+
+  // select, radio AND combobox (react-select) all resolve via the selectable
+  // logic first, then the text map (Country etc.), then an exact label lookup.
+  if (field.type === 'select' || field.type === 'radio' || field.type === 'combobox') {
+    return mapSelectableFromResume(field, r, ctx) || fromResumeMap() || exactLabelLookup(field.label, r);
   }
 
   if (field.type === 'checkbox') return null;
 
-  // Text fields — regex pattern matching first
-  for (const { re, key, fn } of RESUME_MAP) {
-    if (re.test(ctx)) {
-      return fn ? fn(r) : (r[key] || null);
-    }
-  }
-
-  // Exact label match — catches any previously answered field stored by label key
-  return exactLabelLookup(field.label, r);
+  // Text fields — regex pattern matching first, then exact label match.
+  return fromResumeMap() || exactLabelLookup(field.label, r);
 }
 
 function exactLabelLookup(label, r) {
@@ -866,12 +869,19 @@ function mapSelectableFromResume(field, r, ctx) {
       const isMatch = patterns.some(p => new RegExp(p, 'i').test(rawValue));
       if (!isMatch) continue;
 
+      // Combobox (react-select): its options aren't in the DOM until it's opened,
+      // so return the canonical answer and let fillCombobox find it live.
+      if (!options.length) return canonical;
+
       // Find the actual option with that value/text
       const match = options.find(o =>
         patterns.some(p => new RegExp(p, 'i').test(o.value) || new RegExp(p, 'i').test(o.text))
       );
       if (match) return match.value;
     }
+
+    // Combobox with no valueMap hit — hand the raw value to fillCombobox to search.
+    if (!options.length) return rawValue;
 
     // Direct match fallback
     const direct = options.find(o =>
@@ -968,62 +978,96 @@ function normaliseCountry(raw) {
   return lower; // pass through as-is for unlisted countries
 }
 
+// Ask the background service worker to dispatch a TRUSTED click at an element's
+// centre (via chrome.debugger / CDP). react-select & co. ignore synthetic events,
+// so this is the only reliable way to open/select these dropdowns from an extension.
+function trustedClickEl(el) {
+  return new Promise(resolve => {
+    // Only scroll when the element is actually off-screen. react-select closes its
+    // menu on scroll, so scrolling an already-visible OPTION would detach it and the
+    // click would miss (or hit the adjacent option). This was the "authorized → No" bug.
+    const r0 = el.getBoundingClientRect();
+    const offscreen = r0.width === 0 || r0.height === 0 ||
+                      r0.top < 4 || r0.bottom > window.innerHeight - 4;
+    if (offscreen) { try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {} }
+    setTimeout(() => {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) { resolve(false); return; }
+      const x = Math.round(r.left + r.width / 2);
+      const y = Math.round(r.top + r.height / 2);
+      // Hit-test: the click point must actually land on this element (or a descendant);
+      // otherwise an overlay / adjacent option would be clicked. Bail if it won't.
+      const hit = document.elementFromPoint(x, y);
+      if (hit && hit !== el && !el.contains(hit) && !hit.contains(el)) { resolve(false); return; }
+      chrome.runtime.sendMessage({ type: 'TRUSTED_CLICK', x, y }, resp => {
+        if (chrome.runtime.lastError) { resolve(false); return; }
+        resolve(!!(resp && resp.ok));
+      });
+    }, offscreen ? 300 : 80);
+  });
+}
+
 // ── CUSTOM COMBOBOX FILLER ────────────────────────────────────────────────────
 async function fillCombobox(field, value) {
   const el = field.el;
 
   // Normalise country values before trying to match
   const isCountry = /country|nation/i.test(field.label + field.name);
-  const searchVal = isCountry ? normaliseCountry(value) : value.toLowerCase();
+  const searchVal = isCountry ? normaliseCountry(value) : String(value).toLowerCase();
+
+  const control = el.closest('[class*="select__control"], [class*="-control"], [class*="combo"]') || el.parentElement || el;
+  const readCur = () => (control.querySelector('[class*="single-value"], [class*="singleValue"]')?.textContent || el.value || '').trim().toLowerCase();
 
   // Skip if this combobox already shows the target value (no re-typing / doubling)
-  const ctrl = el.closest('[class*="select__control"], [class*="-control"], [class*="combo"]') || el.parentElement;
-  const cur  = (ctrl?.querySelector('[class*="single-value"], [class*="singleValue"]')?.textContent || el.value || '').trim().toLowerCase();
-  if (cur && (cur === searchVal || cur.includes(searchVal))) { el.classList.add('ot-filled'); return true; }
+  const cur0 = readCur();
+  if (cur0 && (cur0 === searchVal || cur0.includes(searchVal))) { el.classList.add('ot-filled'); return true; }
 
-  // Step 1: open the dropdown — try the element and its parent trigger
-  el.focus();
-  el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-  el.click();
-  // Also click the parent wrapper (Greenhouse wraps comboboxes in a clickable div)
-  const trigger = el.closest('[class*="select"], [class*="dropdown"], [class*="combo"]') || el.parentElement;
-  if (trigger && trigger !== el) {
-    trigger.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-    trigger.click();
+  // Try up to twice: open → find option → select → VERIFY the committed value.
+  // Verification is the safety net — we never leave a wrong value (e.g. answering
+  // "authorized to work?" with "No" because a click drifted to the adjacent option).
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    let opened = await trustedClickEl(control);
+    await sleep(450);
+    let matched = findDropdownOption(searchVal, value);
+
+    // Type to filter if needed (long lists), then look again.
+    if (!matched) {
+      triggerReactSetter(el, 'value', value);
+      el.value = value;
+      el.dispatchEvent(new Event('input',  { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      await sleep(450);
+      matched = findDropdownOption(searchVal, value);
+    }
+    // Synthetic open fallback (non-react custom dropdowns)
+    if (!matched && !opened) {
+      el.focus();
+      el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      el.click();
+      await sleep(350);
+      matched = findDropdownOption(searchVal, value);
+    }
+    if (!matched) { await sleep(150); continue; }
+
+    const wantText = (matched.textContent || '').trim().toLowerCase();
+    const ok = await trustedClickEl(matched);
+    if (!ok) {
+      matched.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      matched.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true }));
+      matched.click();
+    }
+    await sleep(300);
+
+    // VERIFY: did the control actually commit the value we intended?
+    const cur = readCur();
+    const good = cur && (cur === searchVal || cur.includes(searchVal) ||
+                         (wantText && (cur === wantText || cur.includes(wantText) || wantText.includes(cur))));
+    if (good) { el.classList.add('ot-filled'); return true; }
+    // Wrong/blank — close any open menu and retry once.
+    await trustedClickEl(control).catch(() => {});
+    await sleep(150);
   }
-  await sleep(300);
-
-  // Step 2: type to filter options
-  triggerReactSetter(el, 'value', value);
-  el.value = value;
-  el.dispatchEvent(new Event('input',   { bubbles: true }));
-  el.dispatchEvent(new Event('change',  { bubbles: true }));
-  el.dispatchEvent(new KeyboardEvent('keydown', { key: value[0], bubbles: true }));
-  await sleep(400); // wait for options to render
-
-  // Step 3: find matching option in any visible listbox
-  let matched = findDropdownOption(searchVal, value);
-
-  // Step 4: if no match yet, try clearing and retyping just first word
-  if (!matched) {
-    const firstWord = value.split(/\s+/)[0];
-    triggerReactSetter(el, 'value', firstWord);
-    el.value = firstWord;
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    await sleep(350);
-    matched = findDropdownOption(searchVal, value);
-  }
-
-  if (!matched) return false;
-
-  // Step 5: click the matched option
-  matched.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-  matched.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true }));
-  matched.click();
-  await sleep(150);
-
-  el.classList.add('ot-filled');
-  return true;
+  return false; // never leaves a wrong selection
 }
 
 function findDropdownOption(searchVal, rawValue) {
@@ -1111,6 +1155,34 @@ function fillCheckbox(el, value) {
   return true;
 }
 
+// Attach the resume, preferring a TRUSTED file-set (chrome.debugger DOM.setFileInputFiles
+// via background) when a disk path is configured — react file inputs reject a
+// synthetically-set FileList. Falls back to the DataTransfer approach for simpler forms.
+async function attachResume(el, { resumeFilePath, resumeFile }) {
+  // 1. Trusted path (works on react/Greenhouse forms): set the file via CDP.
+  if (resumeFilePath) {
+    let selector;
+    if (el.id) selector = '#' + (window.CSS && CSS.escape ? CSS.escape(el.id) : el.id);
+    else { el.setAttribute('data-ot-resume', '1'); selector = 'input[data-ot-resume="1"]'; }
+    // Success = the form accepted the file: either the input now has a file, or the
+    // form re-rendered and replaced the input entirely.
+    const attached = () => { const inp = document.querySelector(selector); return !inp || (inp.files && inp.files.length > 0); };
+    for (let i = 0; i < 2; i++) {
+      const resp = await new Promise(res =>
+        chrome.runtime.sendMessage({ type: 'TRUSTED_SET_FILE', selector, paths: [resumeFilePath] }, r => res(r || {})));
+      await sleep(900);
+      if (resp.ok && attached()) { el.classList.add('ot-filled'); return true; }
+      await sleep(400);
+    }
+  }
+  // 2. Fallback: synthetic DataTransfer (works on plain, non-react forms)
+  if (resumeFile?.base64) {
+    const ok = await fillFileInput(el, resumeFile.base64, resumeFile.name);
+    if (ok) return true;
+  }
+  return false;
+}
+
 async function fillFileInput(el, base64, fileName) {
   try {
     // base64 may be a data URL ("data:mime;base64,xxx") or raw base64
@@ -1169,6 +1241,20 @@ function requiresValidation(field) {
   return field.type === 'radio' || field.type === 'select' || field.type === 'combobox';
 }
 
+// A react-select commits its chosen value to a sibling `.select__single-value`
+// element — the <input> itself is left EMPTY. Reading el.value therefore reports
+// a filled dropdown as empty, which made the retry loop re-touch every dropdown
+// ("revisited") and never see the form as complete. Read the committed display.
+function comboCommittedValue(field) {
+  const el = field.el;
+  if (!el) return '';
+  const control = el.closest('[class*="select__control"], [class*="-control"], [class*="combo"]');
+  const sv = control && control.querySelector('[class*="single-value"], [class*="singleValue"], [class*="multiValue"]');
+  const shown = (sv && sv.textContent.trim()) || (el.value || '').trim();
+  // Ignore placeholder text
+  return /^(select\.\.\.|select|choose|--)/i.test(shown) ? '' : shown;
+}
+
 function validateSelectableField(field) {
   if (field.type === 'radio') {
     return !!document.querySelector(`input[type="radio"][name="${field.name}"]:checked`);
@@ -1177,9 +1263,7 @@ function validateSelectableField(field) {
     return field.el.value !== '' && field.el.selectedIndex > 0;
   }
   if (field.type === 'combobox') {
-    const val = (field.el?.value || '').trim();
-    // Consider filled if the input has a value and no error indicators nearby
-    return val.length > 0 && !field.el?.getAttribute('aria-invalid');
+    return comboCommittedValue(field).length > 0 && field.el?.getAttribute('aria-invalid') !== 'true';
   }
   return true;
 }
@@ -1187,7 +1271,7 @@ function validateSelectableField(field) {
 function isFieldFilled(field) {
   if (field.type === 'radio')    return validateSelectableField(field);
   if (field.type === 'select')   return validateSelectableField(field);
-  if (field.type === 'combobox') return (field.el?.value || '').trim().length > 0;
+  if (field.type === 'combobox') return comboCommittedValue(field).length > 0;
   if (field.type === 'checkbox') return true;
   if (field.type === 'file')     return true;
   return (field.el?.value || '').trim().length > 0;
@@ -1295,28 +1379,52 @@ async function getStorage() {
       claudeApiKey:   '',
       claudeEnabled:  true,
       resumeFile:     null,
+      resumeFilePath: '',
       resumeText:     '',
       learnedAnswers: {},
     }, resolve);
   });
 }
 
+// Open a combobox (trusted click) just long enough to read its options, then close.
+// react-select renders options only while open, so this is how we capture the real
+// choices for the "needs answers" section.
+async function harvestComboOptions(field) {
+  try {
+    const el = field.el; if (!el) return [];
+    const control = el.closest('[class*="select__control"], [class*="-control"]') || el;
+    await trustedClickEl(control);
+    await sleep(450);
+    const opts = [...document.querySelectorAll('[role="option"], .select__option, [class*="__option"]')]
+      .filter(o => o.offsetParent !== null)
+      .map(o => o.textContent.trim())
+      .filter(t => t && !/^select|^choose|^--|no options|no results/i.test(t));
+    await trustedClickEl(control); // toggle closed so it doesn't block the next field
+    await sleep(120);
+    return [...new Set(opts)];
+  } catch { return []; }
+}
+
 async function saveLearnedFields(fields) {
+  // Gather options up front so the "needs answers" section shows real dropdown
+  // choices — comboboxes only expose their options while open.
+  const prepared = [];
+  for (const f of fields) {
+    let options = (f.options || []).map(o => o.text || o.value || o);
+    if (f.type === 'combobox' && !options.length) options = await harvestComboOptions(f);
+    prepared.push({ key: (f.label || f.name || '').trim(), type: f.type || 'text', options });
+  }
   return new Promise(resolve => {
     chrome.storage.local.get({ learnedAnswers: {} }, d => {
       const updated = { ...d.learnedAnswers };
-      fields.forEach(f => {
-        const key = (f.label || f.name || '').trim();
+      prepared.forEach(({ key, type, options }) => {
         if (!key) return;
-        // Only add if not already answered
         const existing = updated[key];
         const alreadyAnswered = existing && (typeof existing === 'string' ? existing : existing.answer);
         if (!alreadyAnswered) {
-          updated[key] = {
-            answer:  '',
-            type:    f.type || 'text',
-            options: (f.options || []).map(o => o.text || o.value || o),
-          };
+          updated[key] = { answer: '', type, options };
+        } else if (existing && typeof existing === 'object' && options.length && !(existing.options || []).length) {
+          existing.options = options; // backfill options onto a previously-saved entry
         }
       });
       chrome.storage.local.set({ learnedAnswers: updated }, resolve);

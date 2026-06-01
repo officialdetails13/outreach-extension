@@ -204,7 +204,7 @@ function renderLearnedFields(learned) {
 
     let inputHtml = '';
 
-    if ((type === 'select') && options.length) {
+    if ((type === 'select' || type === 'combobox') && options.length) {
       inputHtml = `<select class="learned-answer" data-label="${escHtml(label)}">
         <option value="">Select an answer...</option>
         ${options.map(o => `<option value="${escHtml(o)}" ${answer === o ? 'selected' : ''}>${escHtml(o)}</option>`).join('')}
