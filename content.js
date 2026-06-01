@@ -45,9 +45,37 @@ function pageHasFillableInputs() {
     .some(el => el.offsetParent !== null && !el.disabled);
 }
 
+// Does THIS document look like a real job-application form (vs. a search box,
+// newsletter, nav, or tracking iframe)? Used to scope the overlay across frames.
+function looksLikeApplicationForm() {
+  const name   = document.querySelector('#first_name, #last_name, input[name*="first" i], input[name*="last" i], input[autocomplete*="name" i]');
+  const email  = document.querySelector('input[type="email"], #email, input[name*="email" i], input[autocomplete="email"]');
+  const resume = document.querySelector('input[type="file"]');
+  return (!!name && !!email) || !!resume;
+}
+
+// ATS hosts whose forms are commonly embedded in a careers page via <iframe>.
+const ATS_IFRAME_RE = /greenhouse|grnh|lever|myworkdayjobs|ashbyhq|icims|jobvite|smartrecruiters|bamboohr|dayforce|workable|job-boards/i;
+
+// On the TOP page, if there's no application form here but an ATS form is embedded
+// in an iframe, defer to that iframe (its own content script shows the overlay) —
+// otherwise we'd show a useless overlay over the marketing page (e.g. Zoro careers).
+function topShouldDeferToIframe() {
+  if (window.top !== window) return false;
+  if (looksLikeApplicationForm()) return false;
+  return Array.from(document.querySelectorAll('iframe')).some(f => ATS_IFRAME_RE.test(f.src || ''));
+}
+
 function tryInjectOverlay() {
   if (_overlayBtn) return;
-  if (!pageHasFillableInputs()) return;
+  if (window.top !== window) {
+    // Sub-frames only get the overlay if they actually hold an application form
+    // (skips tracking/analytics iframes; the ATS form iframe qualifies).
+    if (!looksLikeApplicationForm()) return;
+  } else {
+    if (topShouldDeferToIframe()) return;
+    if (!pageHasFillableInputs()) return;
+  }
   injectOverlayButton();
 }
 
@@ -275,17 +303,13 @@ function highlightFailedFields(errorFields) {
 }
 
 // ── MAIN AUTOFILL HANDLER ─────────────────────────────────────────────────────
-// Wrapper: always release the debugger (clears Chrome's "is debugging this browser"
-// banner) when a run finishes, however it exits.
 async function handleAutofillClick() {
-  try {
-    return await handleAutofillClickInner();
-  } finally {
-    try { chrome.runtime.sendMessage({ type: 'DEBUGGER_DETACH' }, () => void chrome.runtime.lastError); } catch { /* ignore */ }
-  }
-}
+  // With all_frames, this runs in every frame. Only act in the frame that holds
+  // (or, on a direct page, will reveal) the application form — so a stray trigger
+  // in the top marketing page or a tracking iframe does nothing.
+  if (window.top !== window && !looksLikeApplicationForm()) return;
+  if (window.top === window && topShouldDeferToIframe()) return;
 
-async function handleAutofillClickInner() {
   setOverlayState('loading');
 
   const storage = await getStorage();
@@ -431,7 +455,7 @@ async function fillCurrentPage(storage) {
       const isCoverLetter = /cover.?letter/i.test(hay);
       const isResumeInput = !isCoverLetter && /\b(resume|cv|curriculum.?vitae)\b/i.test(hay);
       if (isResumeInput) {
-        const ok = await attachResume(fel, { resumeFilePath, resumeFile });
+        const ok = await attachResume(fel, { resumeFile });
         if (ok) filled++;
         else clickAttachButton(fel) || highlightFileInput(fel);
       }
@@ -525,7 +549,7 @@ function pageSignature() {
 
 // Trusted click on a submit/next button (synthetic + requestSubmit fallback).
 async function trustedClickButton(el) {
-  const ok = await trustedClickEl(el);
+  const ok = await nativeClick(el);
   if (!ok) {
     el.click();
     const form = el.closest('form');
@@ -1012,33 +1036,36 @@ function normaliseCountry(raw) {
   return lower; // pass through as-is for unlisted countries
 }
 
-// Ask the background service worker to dispatch a TRUSTED click at an element's
-// centre (via chrome.debugger / CDP). react-select & co. ignore synthetic events,
-// so this is the only reliable way to open/select these dropdowns from an extension.
-function trustedClickEl(el) {
-  return new Promise(resolve => {
-    // Only scroll when the element is actually off-screen. react-select closes its
-    // menu on scroll, so scrolling an already-visible OPTION would detach it and the
-    // click would miss (or hit the adjacent option). This was the "authorized → No" bug.
-    const r0 = el.getBoundingClientRect();
-    const offscreen = r0.width === 0 || r0.height === 0 ||
-                      r0.top < 4 || r0.bottom > window.innerHeight - 4;
-    if (offscreen) { try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {} }
-    setTimeout(() => {
-      const r = el.getBoundingClientRect();
-      if (r.width === 0 && r.height === 0) { resolve(false); return; }
-      const x = Math.round(r.left + r.width / 2);
-      const y = Math.round(r.top + r.height / 2);
-      // Hit-test: the click point must actually land on this element (or a descendant);
-      // otherwise an overlay / adjacent option would be clicked. Bail if it won't.
-      const hit = document.elementFromPoint(x, y);
-      if (hit && hit !== el && !el.contains(hit) && !hit.contains(el)) { resolve(false); return; }
-      chrome.runtime.sendMessage({ type: 'TRUSTED_CLICK', x, y }, resp => {
-        if (chrome.runtime.lastError) { resolve(false); return; }
-        resolve(!!(resp && resp.ok));
-      });
-    }, offscreen ? 300 : 80);
-  });
+// Activate an element with a full synthetic pointer+mouse sequence. React
+// components (react-select, etc.) gate on POINTER events — a bare MouseEvent
+// won't open them, but pointerdown→mousedown→pointerup→mouseup→click does.
+// Pure DOM, so it works in any frame (incl. cross-origin iframes) with no
+// special permission and no "debugging this browser" banner.
+async function nativeClick(el) {
+  try {
+    if (!el) return false;
+    let r = el.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) return false;
+    // Only scroll when off-screen (react-select closes its menu on scroll, which
+    // would detach an already-visible option).
+    if (r.top < 4 || r.bottom > window.innerHeight - 4) {
+      try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+      await sleep(120);
+      r = el.getBoundingClientRect();
+    }
+    const x = r.left + r.width / 2, y = r.top + r.height / 2;
+    const pe = { bubbles: true, cancelable: true, composed: true, view: window, pointerId: 1, isPrimary: true, pointerType: 'mouse', clientX: x, clientY: y };
+    const me = { bubbles: true, cancelable: true, composed: true, view: window, button: 0, clientX: x, clientY: y };
+    el.dispatchEvent(new PointerEvent('pointerover',  pe));
+    el.dispatchEvent(new PointerEvent('pointerenter', pe));
+    el.dispatchEvent(new PointerEvent('pointerdown',  { ...pe, buttons: 1 }));
+    el.dispatchEvent(new MouseEvent('mousedown',      { ...me, buttons: 1 }));
+    if (typeof el.focus === 'function') el.focus();
+    el.dispatchEvent(new PointerEvent('pointerup',    { ...pe, buttons: 0 }));
+    el.dispatchEvent(new MouseEvent('mouseup',        me));
+    el.dispatchEvent(new MouseEvent('click',          me));
+    return true;
+  } catch { return false; }
 }
 
 // ── CUSTOM COMBOBOX FILLER ────────────────────────────────────────────────────
@@ -1060,7 +1087,7 @@ async function fillCombobox(field, value) {
   // Verification is the safety net — we never leave a wrong value (e.g. answering
   // "authorized to work?" with "No" because a click drifted to the adjacent option).
   for (let attempt = 1; attempt <= 2; attempt++) {
-    let opened = await trustedClickEl(control);
+    let opened = await nativeClick(control);
     await sleep(450);
     let matched = findDropdownOption(searchVal, value);
 
@@ -1084,7 +1111,7 @@ async function fillCombobox(field, value) {
     if (!matched) { await sleep(150); continue; }
 
     const wantText = (matched.textContent || '').trim().toLowerCase();
-    const ok = await trustedClickEl(matched);
+    const ok = await nativeClick(matched);
     if (!ok) {
       matched.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
       matched.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true }));
@@ -1098,7 +1125,7 @@ async function fillCombobox(field, value) {
                          (wantText && (cur === wantText || cur.includes(wantText) || wantText.includes(cur))));
     if (good) { el.classList.add('ot-filled'); return true; }
     // Wrong/blank — close any open menu and retry once.
-    await trustedClickEl(control).catch(() => {});
+    await nativeClick(control).catch(() => {});
     await sleep(150);
   }
   return false; // never leaves a wrong selection
@@ -1189,32 +1216,19 @@ function fillCheckbox(el, value) {
   return true;
 }
 
-// Attach the resume, preferring a TRUSTED file-set (chrome.debugger DOM.setFileInputFiles
-// via background) when a disk path is configured — react file inputs reject a
-// synthetically-set FileList. Falls back to the DataTransfer approach for simpler forms.
-async function attachResume(el, { resumeFilePath, resumeFile }) {
-  // 1. Trusted path (works on react/Greenhouse forms): set the file via CDP.
-  if (resumeFilePath) {
-    let selector;
-    if (el.id) selector = '#' + (window.CSS && CSS.escape ? CSS.escape(el.id) : el.id);
-    else { el.setAttribute('data-ot-resume', '1'); selector = 'input[data-ot-resume="1"]'; }
-    // Success = the form accepted the file: either the input now has a file, or the
-    // form re-rendered and replaced the input entirely.
-    const attached = () => { const inp = document.querySelector(selector); return !inp || (inp.files && inp.files.length > 0); };
-    for (let i = 0; i < 2; i++) {
-      const resp = await new Promise(res =>
-        chrome.runtime.sendMessage({ type: 'TRUSTED_SET_FILE', selector, paths: [resumeFilePath] }, r => res(r || {})));
-      await sleep(900);
-      if (resp.ok && attached()) { el.classList.add('ot-filled'); return true; }
-      await sleep(400);
-    }
-  }
-  // 2. Fallback: synthetic DataTransfer (works on plain, non-react forms)
-  if (resumeFile?.base64) {
-    const ok = await fillFileInput(el, resumeFile.base64, resumeFile.name);
-    if (ok) return true;
-  }
-  return false;
+// Attach the resume via DataTransfer + change event. React file inputs read
+// input.files on change, so this registers (verified on Greenhouse) — no disk
+// path or debugger needed, and it works inside cross-origin iframes too.
+async function attachResume(el, { resumeFile }) {
+  if (!resumeFile?.base64) return false;
+  // Set the file via DataTransfer + change event (synthetic). React file inputs
+  // read input.files on change, so this registers — verified on Greenhouse.
+  const sel = el.id ? '#' + (window.CSS && CSS.escape ? CSS.escape(el.id) : el.id) : null;
+  const ok = await fillFileInput(el, resumeFile.base64, resumeFile.name);
+  await sleep(700);
+  // Success = the form accepted it: the input has a file, or it re-rendered away.
+  const stillThere = sel ? document.querySelector(sel) : el;
+  return ok && (!stillThere || (stillThere.files && stillThere.files.length > 0));
 }
 
 async function fillFileInput(el, base64, fileName) {
@@ -1427,13 +1441,13 @@ async function harvestComboOptions(field) {
   try {
     const el = field.el; if (!el) return [];
     const control = el.closest('[class*="select__control"], [class*="-control"]') || el;
-    await trustedClickEl(control);
+    await nativeClick(control);
     await sleep(450);
     const opts = [...document.querySelectorAll('[role="option"], .select__option, [class*="__option"]')]
       .filter(o => o.offsetParent !== null)
       .map(o => o.textContent.trim())
       .filter(t => t && !/^select|^choose|^--|no options|no results/i.test(t));
-    await trustedClickEl(control); // toggle closed so it doesn't block the next field
+    await nativeClick(control); // toggle closed so it doesn't block the next field
     await sleep(120);
     return [...new Set(opts)];
   } catch { return []; }
