@@ -40,17 +40,77 @@ function watchForForms() {
 // Detects any fillable inputs — works even when <form> tags are absent (ADP, etc.)
 const FILLABLE = 'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]), select, textarea, [role="combobox"]';
 
+// ── SHADOW-DOM-AWARE QUERIES ──────────────────────────────────────────────────
+// Modern ATSs (SmartRecruiters' spl-*/oc-* web components, etc.) render every
+// field and button inside *open shadow roots*, so a plain document.querySelectorAll
+// returns nothing. These helpers descend through all open shadow roots so field
+// discovery, option-matching, validation and button-finding all work there too.
+function deepRoots() {
+  const roots = [document];
+  const visit = root => {
+    let els;
+    try { els = root.querySelectorAll('*'); } catch { return; }
+    for (const el of els) {
+      const sr = el.shadowRoot;
+      if (sr) { roots.push(sr); visit(sr); }
+    }
+  };
+  visit(document);
+  return roots;
+}
+
+function deepQueryAll(selector) {
+  const out = [], seen = new Set();
+  for (const root of deepRoots()) {
+    let nodes;
+    try { nodes = root.querySelectorAll(selector); } catch { continue; }
+    for (const n of nodes) if (!seen.has(n)) { seen.add(n); out.push(n); }
+  }
+  return out;
+}
+
+function deepQuery(selector) {
+  for (const root of deepRoots()) {
+    let n;
+    try { n = root.querySelector(selector); } catch { continue; }
+    if (n) return n;
+  }
+  return null;
+}
+
+// Visibility that also holds for elements inside shadow roots (where offsetParent
+// can read null even when the element is rendered).
+function isVisible(el) {
+  if (!el) return false;
+  try {
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0 && r.height <= 0) return false;
+    return el.offsetParent !== null || el.getClientRects().length > 0;
+  } catch { return false; }
+}
+
+// closest() that crosses shadow boundaries (walks up through host elements).
+function closestDeep(el, selector) {
+  let node = el;
+  while (node && node.nodeType === 1) {
+    if (node.matches && node.matches(selector)) return node;
+    if (node.parentElement) { node = node.parentElement; continue; }
+    const root = node.getRootNode && node.getRootNode();
+    node = root && root.host ? root.host : null;
+  }
+  return null;
+}
+
 function pageHasFillableInputs() {
-  return Array.from(document.querySelectorAll(FILLABLE))
-    .some(el => el.offsetParent !== null && !el.disabled);
+  return deepQueryAll(FILLABLE).some(el => isVisible(el) && !el.disabled);
 }
 
 // Does THIS document look like a real job-application form (vs. a search box,
 // newsletter, nav, or tracking iframe)? Used to scope the overlay across frames.
 function looksLikeApplicationForm() {
-  const name   = document.querySelector('#first_name, #last_name, input[name*="first" i], input[name*="last" i], input[autocomplete*="name" i]');
-  const email  = document.querySelector('input[type="email"], #email, input[name*="email" i], input[autocomplete="email"]');
-  const resume = document.querySelector('input[type="file"]');
+  const name   = deepQuery('#first_name, #last_name, [id*="first-name" i], [id*="last-name" i], input[name*="first" i], input[name*="last" i], input[autocomplete*="name" i]');
+  const email  = deepQuery('input[type="email"], #email, [id*="email" i], input[name*="email" i], input[autocomplete="email"]');
+  const resume = deepQuery('input[type="file"]');
   return (!!name && !!email) || !!resume;
 }
 
@@ -218,22 +278,24 @@ async function logApplication(status) {
 
 // ── APPLY / SUBMIT BUTTON HELPERS ────────────────────────────────────────────
 function hasVisibleForm() {
-  // Check native <form> tags first
-  const inForm = Array.from(document.querySelectorAll('form')).some(f => {
-    return f.offsetParent !== null &&
-      f.querySelectorAll(FILLABLE).length > 0;
-  });
+  // Check native <form> tags first (shadow-aware)
+  const inForm = deepQueryAll('form').some(f => isVisible(f) && f.querySelectorAll(FILLABLE).length > 0);
   if (inForm) return true;
-  // Fallback: any visible fillable inputs anywhere on page (ADP, custom portals)
+  // Fallback: any visible fillable inputs anywhere on page (ADP, custom portals,
+  // and shadow-DOM forms like SmartRecruiters)
   return pageHasFillableInputs();
 }
 
+// Selector covering native buttons, ARIA buttons and custom button web components
+// (SmartRecruiters spl-button/oc-button, design-system *-button elements, etc.).
+const BUTTON_SELECTOR = 'button, input[type="submit"], [role="button"], a[type="submit"], spl-button, oc-button, [class*="-button"], [class*="btn"]';
+
 async function clickApplyButton() {
   const RE = /\b(apply|apply now|apply for this job|quick apply|easy apply|start application|i'?m interested)\b/i;
-  const candidates = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="submit"]'))
+  const candidates = deepQueryAll(BUTTON_SELECTOR)
     .filter(el => {
       const t = (el.textContent || el.value || '').trim();
-      return el.offsetParent && t.length < 40 && RE.test(t);
+      return isVisible(el) && t.length < 40 && RE.test(t);
     });
   if (!candidates.length) return false;
   // Trusted click (some Apply buttons are react-gated, like the dropdowns).
@@ -253,30 +315,30 @@ async function captureValidationErrors() {
   const seen = new Set();
 
   // aria-invalid on inputs
-  document.querySelectorAll('[aria-invalid="true"], [aria-invalid="error"]').forEach(el => {
-    if (seen.has(el) || !el.offsetParent) return;
+  deepQueryAll('[aria-invalid="true"], [aria-invalid="error"]').forEach(el => {
+    if (seen.has(el) || !isVisible(el)) return;
     seen.add(el);
     const label = getLabel(el) || el.name || el.id;
     if (label) errorFields.push({ el, type: getFieldType(el), label, name: el.name || el.id });
   });
 
   // Inputs inside wrappers with error class names
-  document.querySelectorAll([
+  deepQueryAll([
     '.field--error input, .field--error select, .field--error textarea',
     '.has-error input, .has-error select',
     '[class*="error"] input, [class*="error"] select',
     '[class*="invalid"] input',
   ].join(',')).forEach(el => {
-    if (seen.has(el) || !el.offsetParent) return;
+    if (seen.has(el) || !isVisible(el)) return;
     seen.add(el);
     const label = getLabel(el) || el.name || el.id;
     if (label) errorFields.push({ el, type: getFieldType(el), label, name: el.name || el.id });
   });
 
   // Required fields that are still empty
-  document.querySelectorAll('input[required], select[required], textarea[required]').forEach(el => {
-    if (seen.has(el) || !el.offsetParent) return;
-    const empty = el.tagName === 'SELECT' ? el.value === '' || el.selectedIndex <= 0 : !el.value.trim();
+  deepQueryAll('input[required], select[required], textarea[required], [aria-required="true"]').forEach(el => {
+    if (seen.has(el) || !isVisible(el)) return;
+    const empty = el.tagName === 'SELECT' ? el.value === '' || el.selectedIndex <= 0 : !(el.value || '').trim();
     if (!empty) return;
     seen.add(el);
     const label = getLabel(el) || el.name || el.id;
@@ -452,8 +514,12 @@ async function fillCurrentPage(storage) {
       // getLabel often returns the "Attach" button text for file inputs — detect
       // from id/name/aria + the resume-aware helper instead.
       const hay = `${field.label || ''} ${getFileInputLabel(fel)} ${fel.id || ''} ${fel.name || ''} ${fel.getAttribute('aria-label') || ''}`.toLowerCase();
-      const isCoverLetter = /cover.?letter/i.test(hay);
-      const isResumeInput = !isCoverLetter && /\b(resume|cv|curriculum.?vitae)\b/i.test(hay);
+      // Don't drop the résumé onto a cover-letter/portfolio/photo/etc. uploader.
+      const isOther = /cover.?letter|portfolio|transcript|photo|headshot|picture|certificate|diploma|reference/i.test(hay);
+      // Resume keywords, OR a generic upload control (SmartRecruiters dropzone:
+      // "Choose a file or drop it here") which on application forms is the résumé.
+      const isResumeInput = !isOther &&
+        (/\b(resume|cv|curriculum.?vitae)\b/i.test(hay) || /attach|upload|drop|choose a file|drag|dropzone/i.test(hay));
       if (isResumeInput) {
         const ok = await attachResume(fel, { resumeFile });
         if (ok) filled++;
@@ -540,19 +606,24 @@ async function fillCurrentPage(storage) {
 // intermediate Next/Continue so the multi-page loop knows whether it's done.
 function findAdvanceButton() {
   const txt = el => (el.textContent || el.value || '').trim();
-  const vis = el => el.offsetParent && !el.disabled;
-  const all = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"], a[type="submit"]')).filter(vis);
   const SUBMIT = /\b(submit application|submit your application|submit|send application|finish|complete application)\b/i;
   const NEXT   = /\b(next|continue|save and continue|save & continue|review|proceed)\b/i;
   const byBottom = (a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top;
 
-  const submitBtns = all.filter(el => SUBMIT.test(txt(el)) && txt(el).length < 40).sort(byBottom);
+  // Prefer real button elements / button web components; only fall back to the
+  // generic class-based matches so we don't click a non-interactive wrapper.
+  const primary = deepQueryAll('button, input[type="submit"], [role="button"], a[type="submit"], spl-button, oc-button').filter(isVisible);
+  const fallback = deepQueryAll('[class*="-button"], [class*="btn"]').filter(isVisible);
+  const all = primary.length ? primary : fallback;
+  const ok = el => !el.disabled && txt(el).length < 40;
+
+  const submitBtns = all.filter(el => ok(el) && SUBMIT.test(txt(el))).sort(byBottom);
   if (submitBtns.length) return { el: submitBtns[0], kind: 'submit' };
-  const nextBtns = all.filter(el => NEXT.test(txt(el)) && txt(el).length < 40).sort(byBottom);
+  const nextBtns = all.filter(el => ok(el) && NEXT.test(txt(el))).sort(byBottom);
   if (nextBtns.length) return { el: nextBtns[0], kind: 'next' };
   const native = all.find(el => el.type === 'submit');
   if (native) return { el: native, kind: 'submit' };
-  const formBtns = all.filter(el => el.closest('form') && el.tagName === 'BUTTON' && el.type !== 'reset' && el.type !== 'button');
+  const formBtns = all.filter(el => closestDeep(el, 'form') && el.tagName === 'BUTTON' && el.type !== 'reset' && el.type !== 'button');
   if (formBtns.length) return { el: formBtns[formBtns.length - 1], kind: 'submit' };
   return null;
 }
@@ -560,7 +631,7 @@ function findAdvanceButton() {
 // A fingerprint of the current step — changes when the form advances to a new page.
 function pageSignature() {
   const labels  = scanAllFields().map(f => (f.label || f.name || '')).filter(Boolean).slice(0, 25).join('|');
-  const heading = (document.querySelector('h1, h2, [class*="step"], [class*="progress"], [aria-current="step"]') || {}).textContent || '';
+  const heading = (deepQuery('h1, h2, [class*="step"], [class*="progress"], [aria-current="step"]') || {}).textContent || '';
   return (location.href + '::' + heading.slice(0, 50) + '::' + labels).slice(0, 600);
 }
 
@@ -603,10 +674,10 @@ function scanAllFields() {
   const fields = [];
   const seen   = new Set();
 
-  document.querySelectorAll('input, select, textarea').forEach(el => {
+  deepQueryAll('input, select, textarea').forEach(el => {
     // Allow hidden file inputs through — Greenhouse/Lever hide them behind "Attach" buttons
-    const isHiddenFile = el.type === 'file' && !el.offsetParent;
-    if (!el.offsetParent && el.type !== 'hidden' && !isHiddenFile) return;
+    const isHiddenFile = el.type === 'file' && !isVisible(el);
+    if (!isVisible(el) && el.type !== 'hidden' && !isHiddenFile) return;
     if (el.disabled || el.readOnly) return;
     if (seen.has(el)) return;
     seen.add(el);
@@ -619,7 +690,8 @@ function scanAllFields() {
       const name = el.name || el.id;
       if (!name || seen.has('radio:' + name)) return;
       seen.add('radio:' + name);
-      const group = Array.from(document.querySelectorAll(`input[type="radio"][name="${name}"]`));
+      const root = el.getRootNode();
+      const group = Array.from((root.querySelectorAll ? root : document).querySelectorAll(`input[type="radio"][name="${CSS.escape(name)}"]`));
       fields.push({
         el,
         type: 'radio',
@@ -662,9 +734,9 @@ function scanAllFields() {
     '[aria-haspopup="listbox"]',
     '[aria-haspopup="true"]',
   ];
-  document.querySelectorAll(comboSelectors.join(',')).forEach(el => {
+  deepQueryAll(comboSelectors.join(',')).forEach(el => {
     if (seen.has(el)) return;
-    if (!el.offsetParent) return;
+    if (!isVisible(el)) return;
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') return;
     seen.add(el);
     fields.push({
@@ -695,10 +767,14 @@ function cleanLabelText(text) {
 }
 
 function getLabel(el) {
-  // 1. Explicit <label for="id">
+  const root = el.getRootNode();           // the shadow root (or document) the field lives in
+  const scope = root && root.querySelector ? root : document;
+
+  // 1. Explicit <label for="id"> — resolved within the element's own (shadow) root
   if (el.id) {
-    const explicit = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-    if (explicit) return cleanLabelText(explicit.innerText);
+    let explicit = null;
+    try { explicit = scope.querySelector(`label[for="${CSS.escape(el.id)}"]`); } catch {}
+    if (explicit && explicit.innerText.trim()) return cleanLabelText(explicit.innerText);
   }
 
   // 2. aria-label / aria-labelledby
@@ -706,7 +782,8 @@ function getLabel(el) {
   if (ariaLabel) return ariaLabel.trim();
   const ariaBy = el.getAttribute('aria-labelledby');
   if (ariaBy) {
-    const ref = document.getElementById(ariaBy);
+    let ref = null;
+    try { ref = scope.querySelector(`#${CSS.escape(ariaBy)}`); } catch {}
     if (ref) return cleanLabelText(ref.innerText);
   }
 
@@ -727,7 +804,20 @@ function getLabel(el) {
     node = node.parentElement;
   }
 
-  // 4. Fall back to name/id (never use placeholder — it's example data, not a label)
+  // 4. Web-component label fallback (SmartRecruiters spl-typography-label, design
+  //    systems, etc.): walk up — crossing shadow boundaries — and grab the nearest
+  //    label-ish sibling element that holds short text and no form control.
+  const labelish = c => (/label|legend/i.test(c.tagName) || /label/i.test(c.className || '') ||
+                         /typography-label/i.test(c.tagName)) &&
+                        c.innerText && !c.querySelector('input, select, textarea, button');
+  node = el.parentElement;
+  for (let i = 0; i < 6 && node; i++) {
+    const cand = Array.from(node.children).find(labelish);
+    if (cand) { const t = cleanLabelText(cand.innerText); if (t) return t; }
+    node = node.parentElement || (node.getRootNode() instanceof ShadowRoot ? node.getRootNode().host : null);
+  }
+
+  // 5. Fall back to name/id (never use placeholder — it's example data, not a label)
   return el.name || el.id || '';
 }
 
@@ -1085,6 +1175,34 @@ async function nativeClick(el) {
   } catch { return false; }
 }
 
+// Type into a field character-by-character with real keyboard events. Async
+// autocompletes (SmartRecruiters' city/location lookup, etc.) only fire their
+// search on keydown/keyup — a single programmatic 'input' event isn't enough.
+async function typeWithKeys(el, text) {
+  try {
+    el.focus();
+    triggerReactSetter(el, 'value', '');
+    el.value = '';
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+    let acc = '';
+    for (const ch of String(text)) {
+      el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, composed: true, key: ch }));
+      acc += ch;
+      triggerReactSetter(el, 'value', acc);
+      el.value = acc;
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: ch }));
+      el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, composed: true, key: ch }));
+      await sleep(55);
+    }
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  } catch { /* ignore */ }
+}
+
+function pressKey(el, key, keyCode) {
+  ['keydown', 'keyup'].forEach(t =>
+    el.dispatchEvent(new KeyboardEvent(t, { bubbles: true, cancelable: true, composed: true, key, code: key, keyCode, which: keyCode })));
+}
+
 // ── DEMOGRAPHIC / EEO QUESTIONS ───────────────────────────────────────────────
 // Voluntary self-identification questions. When the user hasn't supplied an answer
 // we select the "decline to self-identify" option — we never fabricate these, and
@@ -1116,8 +1234,15 @@ async function fillCombobox(field, value) {
   const isCountry = /country|nation/i.test(field.label + field.name);
   const searchVal = isDecline ? '' : (isCountry ? normaliseCountry(value) : String(value).toLowerCase());
 
-  const control = el.closest('[class*="select__control"], [class*="-control"], [class*="combo"]') || el.parentElement || el;
-  const readCur = () => (control.querySelector('[class*="single-value"], [class*="singleValue"]')?.textContent || el.value || '').trim().toLowerCase();
+  // The clickable "control": react-select wrappers first, then the combobox role
+  // (SmartRecruiters autocomplete inputs are themselves role=combobox), then a
+  // button (SR phone country-code select), else the element itself.
+  const control =
+    closestDeep(el, '[class*="select__control"], [class*="-control"], [class*="combo"]') ||
+    (el.getAttribute('role') === 'combobox' ? el : null) ||
+    (el.tagName === 'BUTTON' ? el : null) ||
+    el.parentElement || el;
+  const readCur = () => (control.querySelector?.('[class*="single-value"], [class*="singleValue"]')?.textContent || el.value || '').trim().toLowerCase();
 
   // Skip if this combobox already shows the target value (no re-typing / doubling)
   const cur0 = readCur();
@@ -1130,16 +1255,16 @@ async function fillCombobox(field, value) {
     let opened = await nativeClick(control);
     await sleep(450);
     let matched = findDropdownOption(searchVal, value);
+    let didType = false;
 
-    // Type to filter if needed (long lists), then look again. Never type the
-    // decline sentinel — it isn't real text and would filter the list to nothing.
-    if (!matched && !isDecline) {
-      triggerReactSetter(el, 'value', value);
-      el.value = value;
-      el.dispatchEvent(new Event('input',  { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-      await sleep(450);
-      matched = findDropdownOption(searchVal, value);
+    // Type to filter if needed (long lists / async autocompletes), then look again.
+    // Use real keystrokes (autocompletes like SmartRecruiters' city lookup only
+    // search on keydown/keyup), and poll for a few seconds since results are
+    // fetched asynchronously. Never type the decline sentinel.
+    if (!matched && !isDecline && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+      didType = true;
+      await typeWithKeys(el, value);
+      for (let i = 0; i < 14 && !matched; i++) { await sleep(300); matched = findDropdownOption(searchVal, value); }
     }
     // Synthetic open fallback (non-react custom dropdowns)
     if (!matched && !opened) {
@@ -1152,21 +1277,54 @@ async function fillCombobox(field, value) {
     if (!matched) { await sleep(150); continue; }
 
     const wantText = (matched.textContent || '').trim().toLowerCase();
-    const ok = await nativeClick(matched);
-    if (!ok) {
-      matched.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-      matched.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true }));
-      matched.click();
-    }
-    await sleep(300);
+    // Whether an option menu is still open anywhere (a real selection closes it).
+    const menuOpen = () => deepQueryAll('spl-select-option, [role="option"], [role="listbox"] li, .select__option, [class*="__option"]').some(isVisible);
+    // VERIFY helper: a commit means the value matches AND the menu has closed —
+    // otherwise typed-but-unselected text (autocompletes) reads as a false success.
+    const committed = () => {
+      const cur = readCur();
+      const valOk = isDecline
+        ? DECLINE_RE.test(cur)
+        : cur && (cur === searchVal || cur.includes(searchVal) ||
+                  (wantText && (cur === wantText || cur.includes(wantText) || wantText.includes(cur))));
+      return valOk && !menuOpen();
+    };
 
-    // VERIFY: did the control actually commit the value we intended?
-    const cur = readCur();
-    const good = isDecline
-      ? DECLINE_RE.test(cur)
-      : cur && (cur === searchVal || cur.includes(searchVal) ||
-                (wantText && (cur === wantText || cur.includes(wantText) || wantText.includes(cur))));
-    if (good) { el.classList.add('ot-filled'); return true; }
+    // Keyboard selection for keyboard-nav widgets (SmartRecruiters
+    // spl-keyboard-list-navigator) where a synthetic click doesn't commit. Settle
+    // first so any late auto-highlight has landed, then arrow `downs` times and
+    // Enter. committed() guards against landing on the wrong value.
+    const pickByArrows = async (downs) => {
+      await sleep(420);
+      for (let k = 0; k < downs; k++) { pressKey(el, 'ArrowDown', 40); await sleep(150); }
+      pressKey(el, 'Enter', 13);
+      await sleep(550);
+      return committed();
+    };
+
+    // Autocomplete (we typed a query): results are ranked, so the TOP one is the
+    // best match for the typed value — one ArrowDown lands on it. Counting to a
+    // specific index races the widget's own highlight, so don't. Runs BEFORE any
+    // click (a stray click pre-highlights an option and offsets the arrow count).
+    if (didType) {
+      if (await pickByArrows(1)) { el.classList.add('ot-filled'); return true; }
+    }
+
+    // Click the option (works for react-select, Lever, native-ish menus).
+    await nativeClick(matched);
+    await sleep(300);
+    if (committed()) { el.classList.add('ot-filled'); return true; }
+
+    // Finite-option keyboard widget that showed options on open: arrow to the
+    // matched option's index (committed() rejects a wrong landing — e.g. it will
+    // never accept "Yes" for a question we answered "No").
+    if (!didType && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+      const nav = deepQueryAll('spl-select-option, [role="option"], [role="listbox"] li').filter(isVisible);
+      let idx = nav.indexOf(matched);
+      if (idx < 0) idx = nav.findIndex(o => (o.textContent || '').trim().toLowerCase() === wantText);
+      if (idx >= 0 && idx <= 25 && await pickByArrows(idx + 1)) { el.classList.add('ot-filled'); return true; }
+    }
+
     // Wrong/blank — close any open menu and retry once.
     await nativeClick(control).catch(() => {});
     await sleep(150);
@@ -1189,6 +1347,10 @@ function findDropdownOption(searchVal, rawValue) {
     '[class*="list-item"]',
     'li[class*="select"]',
     'li[class*="result"]',
+    'spl-select-option',                 // SmartRecruiters web-component options
+    '[class*="select-option"]',
+    '[class*="autocomplete-option"]',
+    '[data-sr-id*="option"]',
   ];
 
   const lower = (searchVal || '').toLowerCase();
@@ -1203,8 +1365,8 @@ function findDropdownOption(searchVal, rawValue) {
   const seen = new Set();
   const opts = [];
   for (const selector of OPTION_SELECTORS) {
-    document.querySelectorAll(selector).forEach(o => {
-      if (o.offsetParent === null || seen.has(o)) return;
+    deepQueryAll(selector).forEach(o => {
+      if (!isVisible(o) || seen.has(o)) return;
       seen.add(o);
       const t = (o.textContent || '').trim();
       if (t) opts.push({ o, l: t.toLowerCase() });
@@ -1272,12 +1434,12 @@ async function attachResume(el, { resumeFile }) {
   if (!resumeFile?.base64) return false;
   // Set the file via DataTransfer + change event (synthetic). React file inputs
   // read input.files on change, so this registers — verified on Greenhouse.
-  const sel = el.id ? '#' + (window.CSS && CSS.escape ? CSS.escape(el.id) : el.id) : null;
   const ok = await fillFileInput(el, resumeFile.base64, resumeFile.name);
   await sleep(700);
-  // Success = the form accepted it: the input has a file, or it re-rendered away.
-  const stillThere = sel ? document.querySelector(sel) : el;
-  return ok && (!stillThere || (stillThere.files && stillThere.files.length > 0));
+  // Success = the form accepted it: the input still has a file, or it re-rendered
+  // away (detached from the DOM). Works for shadow-DOM inputs (we hold el directly).
+  const stillThere = el.isConnected ? el : null;
+  return ok && (!stillThere || (el.files && el.files.length > 0));
 }
 
 async function fillFileInput(el, base64, fileName) {
@@ -1345,7 +1507,7 @@ function requiresValidation(field) {
 function comboCommittedValue(field) {
   const el = field.el;
   if (!el) return '';
-  const control = el.closest('[class*="select__control"], [class*="-control"], [class*="combo"]');
+  const control = closestDeep(el, '[class*="select__control"], [class*="-control"], [class*="combo"]');
   const sv = control && control.querySelector('[class*="single-value"], [class*="singleValue"], [class*="multiValue"]');
   const shown = (sv && sv.textContent.trim()) || (el.value || '').trim();
   // Ignore placeholder text
@@ -1354,7 +1516,9 @@ function comboCommittedValue(field) {
 
 function validateSelectableField(field) {
   if (field.type === 'radio') {
-    return !!document.querySelector(`input[type="radio"][name="${field.name}"]:checked`);
+    const root = field.el?.getRootNode?.();
+    const scope = root && root.querySelector ? root : document;
+    return !!scope.querySelector(`input[type="radio"][name="${CSS.escape(field.name)}"]:checked`);
   }
   if (field.type === 'select') {
     return field.el.value !== '' && field.el.selectedIndex > 0;
@@ -1489,11 +1653,13 @@ async function getStorage() {
 async function harvestComboOptions(field) {
   try {
     const el = field.el; if (!el) return [];
-    const control = el.closest('[class*="select__control"], [class*="-control"]') || el;
+    const control = closestDeep(el, '[class*="select__control"], [class*="-control"]') ||
+                    (el.getAttribute('role') === 'combobox' ? el : null) ||
+                    (el.tagName === 'BUTTON' ? el : null) || el;
     await nativeClick(control);
     await sleep(450);
-    const opts = [...document.querySelectorAll('[role="option"], .select__option, [class*="__option"]')]
-      .filter(o => o.offsetParent !== null)
+    const opts = deepQueryAll('[role="option"], .select__option, [class*="__option"]')
+      .filter(isVisible)
       .map(o => o.textContent.trim())
       .filter(t => t && !/^select|^choose|^--|no options|no results/i.test(t));
     await nativeClick(control); // toggle closed so it doesn't block the next field
