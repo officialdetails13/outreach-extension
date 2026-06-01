@@ -447,41 +447,84 @@ async function handleAutofillClick() {
     showToast(`💡 ${claudeFields.length} field${claudeFields.length !== 1 ? 's' : ''} saved to Settings → "Saved Form Answers" (${reason}).`, 'info');
   }
 
-  // Step 4: click Submit and capture any validation errors
+  // Step 4: submit with a fix-and-retry loop (ported from the bot's verifyAndSubmit).
+  // Instead of giving up on the first validation failure, re-fill the offending
+  // fields and resubmit until the page reaches a confirmation state.
   setOverlayState('loading');
   showToast(`✅ Filled ${filled} fields — submitting...`, 'info');
 
-  // Also check required-but-unfilled before submitting
-  const preSubmitUnfilled = scanAllFields().filter(f =>
-    isRequiredField(f) && !isFieldFilled(f) && f.type !== 'file'
-  );
-  if (preSubmitUnfilled.length) {
-    highlightFailedFields(preSubmitUnfilled);
-    await saveLearnedFields(preSubmitUnfilled);
-    await logApplication('failed');
-    setOverlayState('error');
-    showToast(`⚠️ ${preSubmitUnfilled.length} required field${preSubmitUnfilled.length !== 1 ? 's' : ''} still empty — highlighted in red.`, 'warn');
-    return;
-  }
+  const MAX_SUBMITS = 3;
+  let lastErrors = [];
+  for (let attempt = 1; attempt <= MAX_SUBMITS; attempt++) {
+    // Top up any required-but-empty fields before each submit
+    // (skip-if-set guards in fillText/fillCombobox prevent double-typing).
+    const empties = scanAllFields().filter(f =>
+      isRequiredField(f) && !isFieldFilled(f) && f.type !== 'file' && f.type !== 'checkbox'
+    );
+    if (empties.length) await refillFields(empties, resumeData, learnedAnswers);
 
-  const submitted = await clickSubmitButton();
-  if (submitted) {
-    const errorFields = await captureValidationErrors();
-    if (errorFields.length) {
-      highlightFailedFields(errorFields);
-      await saveLearnedFields(errorFields);
-      await logApplication('failed');
-      setOverlayState('error');
-      showToast(`⚠️ ${errorFields.length} field${errorFields.length !== 1 ? 's' : ''} failed validation — highlighted in red.`, 'warn');
-    } else {
+    const submitted = await clickSubmitButton();
+    if (!submitted) {
+      setOverlayState('done');
+      showToast(`✅ Filled ${filled} field${filled !== 1 ? 's' : ''}. No submit button found — click it manually.`, 'info');
+      return;
+    }
+
+    await sleep(1600); // let navigation / validation render
+
+    if (isConfirmed()) {
       await logApplication('applied');
       setOverlayState('done');
-      showToast(`✅ Submitted! ${filled} fields filled. Logged to Applications.`, 'success');
+      showToast(`✅ Submitted — confirmation page reached.`, 'success');
+      return;
     }
-  } else {
-    // Submit button not found — don't log as applied, just report fill count
-    setOverlayState('done');
-    showToast(`✅ Filled ${filled} field${filled !== 1 ? 's' : ''}. No submit button found — click it manually.`, 'info');
+
+    lastErrors = await captureValidationErrors();
+    if (!lastErrors.length) {
+      // Submit consumed, no errors surfaced, no explicit confirmation text:
+      // treat as submitted (many ATS confirm via a quiet redirect).
+      await logApplication('applied');
+      setOverlayState('done');
+      showToast(`✅ Submitted (${filled} fields) — no validation errors.`, 'success');
+      return;
+    }
+
+    if (attempt < MAX_SUBMITS) {
+      showToast(`↻ ${lastErrors.length} field${lastErrors.length !== 1 ? 's' : ''} need fixing — retrying (${attempt}/${MAX_SUBMITS})…`, 'info');
+      await refillFields(lastErrors, resumeData, learnedAnswers);
+      await sleep(400);
+    }
+  }
+
+  // Exhausted retries — highlight what's still wrong for manual finish.
+  highlightFailedFields(lastErrors);
+  await saveLearnedFields(lastErrors);
+  await logApplication('failed');
+  setOverlayState('error');
+  showToast(`⚠️ ${lastErrors.length} field${lastErrors.length !== 1 ? 's' : ''} still failing after ${MAX_SUBMITS} attempts — highlighted in red.`, 'warn');
+}
+
+// True once the page shows a real application-confirmation state — prevents
+// logging "applied" on a form that merely had no inline errors.
+function isConfirmed() {
+  const txt = `${location.href} ${document.title} ${(document.body?.innerText || '').slice(0, 3000)}`;
+  return /thank.?you for applying|thank.?you for your (application|interest)|application (was )?(submitted|received|complete)|successfully applied|we.?ve received your application|your application has been (sent|submitted|received)|application[-\s]?confirmation/i.test(txt);
+}
+
+// Re-map and re-fill a set of error / still-empty fields (resume + learned answers;
+// no Claude call here to avoid repeated API hits on retries).
+async function refillFields(targets, r, learnedAnswers) {
+  const byEl = new Map(scanAllFields().map(f => [f.el, f]));
+  for (const t of targets) {
+    const field = byEl.get(t.el) || t;
+    if (!field || field.type === 'file' || field.type === 'checkbox') continue;
+    let value = mapFromResume(field, r);
+    if (!value) {
+      const key   = (field.label || field.name || '').trim();
+      const entry = learnedAnswers && learnedAnswers[key];
+      value = entry && (typeof entry === 'string' ? entry : entry.answer);
+    }
+    if (value) { await fillField(field, value); await sleep(40); }
   }
 }
 
@@ -690,21 +733,28 @@ const SELECT_MAP = [
     },
   },
   {
-    // Greenhouse phrasing: "Do you now or in the future require sponsorship?"
-    re: /sponsor|sponsorship|require.?visa/i,
+    // "Do you now or in the future require sponsorship?" — default NO.
+    // Respects an explicit profile value if set, otherwise answers No.
+    re: /sponsor|sponsorship|require.?visa|need.?sponsor|immigration.?support/i,
     key: 'requiresSponsorship',
-    valueMap: { 'true': ['yes', 'true', '1'], 'false': ['no', 'false', '0'] },
+    value: 'No',
+    valueMap: { 'Yes': ['yes', 'true', '1'], 'No': ['no', 'false', '0'] },
   },
   {
-    // Greenhouse: "Are you authorized to work in the country of the job?"
-    re: /authorized.?to.?work|legally.?authorized|work.?authoriz|eligible.?to.?work/i,
-    key: 'workAuth',
-    valueMap: {
-      'US Citizen': ['citizen', 'us_citizen', 'yes'],
-      'Green Card': ['green_card', 'permanent'],
-      'H1B':        ['h1b', 'h-1b'],
-      'OPT':        ['opt'],
-    },
+    // "Are you authorized to work in the country of the job?" — answer YES.
+    // SAFETY: this is a yes/no *eligibility* question, NOT a status question.
+    // Never resolve it to "US Citizen"/"Green Card" — that would be a false
+    // statement for a work-authorized non-citizen. (See the separate
+    // work.?auth|visa.?status rule for explicit status dropdowns.)
+    re: /authorized.?to.?work|legally.?authorized|work.?authoriz|eligible.?to.?work|authorized.?to.?be.?employed|legally.?eligible/i,
+    value: 'Yes',
+    valueMap: { 'Yes': ['yes', 'authorized', 'eligible', 'i am', 'true'], 'No': ['no', 'not', 'false'] },
+  },
+  {
+    // "Have you previously been employed here / are you currently an employee?" — No
+    re: /previous(ly)?.?(been.?)?employ|currently.?(an? )?employ|worked.?(here|for us).?before|former.?employee/i,
+    value: 'No',
+    valueMap: { 'Yes': ['yes', 'true'], 'No': ['no', 'false'] },
   },
   {
     // "Are you 18 years of age or older?"
@@ -802,8 +852,10 @@ function mapSelectableFromResume(field, r, ctx) {
   for (const mapping of SELECT_MAP) {
     if (!mapping.re.test(ctx)) continue;
 
-    const rawValue = mapping.key ? r[mapping.key] : mapping.value;
-    if (!rawValue) continue;
+    // Prefer the profile value; fall back to the rule's safe default when unset.
+    let rawValue = mapping.key ? r[mapping.key] : mapping.value;
+    if (rawValue === undefined || rawValue === null || rawValue === '') rawValue = mapping.value;
+    if (rawValue === undefined || rawValue === null || rawValue === '') continue;
 
     const options = field.type === 'radio'
       ? field.options.map(o => ({ value: o.value, text: o.text }))
@@ -924,6 +976,11 @@ async function fillCombobox(field, value) {
   const isCountry = /country|nation/i.test(field.label + field.name);
   const searchVal = isCountry ? normaliseCountry(value) : value.toLowerCase();
 
+  // Skip if this combobox already shows the target value (no re-typing / doubling)
+  const ctrl = el.closest('[class*="select__control"], [class*="-control"], [class*="combo"]') || el.parentElement;
+  const cur  = (ctrl?.querySelector('[class*="single-value"], [class*="singleValue"]')?.textContent || el.value || '').trim().toLowerCase();
+  if (cur && (cur === searchVal || cur.includes(searchVal))) { el.classList.add('ot-filled'); return true; }
+
   // Step 1: open the dropdown — try the element and its parent trigger
   el.focus();
   el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
@@ -945,7 +1002,7 @@ async function fillCombobox(field, value) {
   await sleep(400); // wait for options to render
 
   // Step 3: find matching option in any visible listbox
-  let matched = findDropdownOption(searchVal);
+  let matched = findDropdownOption(searchVal, value);
 
   // Step 4: if no match yet, try clearing and retyping just first word
   if (!matched) {
@@ -954,7 +1011,7 @@ async function fillCombobox(field, value) {
     el.value = firstWord;
     el.dispatchEvent(new Event('input', { bubbles: true }));
     await sleep(350);
-    matched = findDropdownOption(searchVal);
+    matched = findDropdownOption(searchVal, value);
   }
 
   if (!matched) return false;
@@ -969,7 +1026,7 @@ async function fillCombobox(field, value) {
   return true;
 }
 
-function findDropdownOption(searchVal) {
+function findDropdownOption(searchVal, rawValue) {
   // All common option selectors across ATS platforms
   const OPTION_SELECTORS = [
     '[role="option"]',
@@ -986,21 +1043,35 @@ function findDropdownOption(searchVal) {
     'li[class*="result"]',
   ];
 
-  const lower = searchVal.toLowerCase();
+  const lower = (searchVal || '').toLowerCase();
+  const tgt   = String(rawValue != null ? rawValue : searchVal).toLowerCase();
+  const isYes = /^(yes|true|1)$/.test(tgt);
+  const isNo  = /^(no|false|0)$/.test(tgt);
+  const esc   = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+  // Gather all *visible* options across every selector once, deduped.
+  // (Phone-number country pickers etc. inject hundreds of hidden [role=option]
+  //  lis — the offsetParent filter drops those so they can't cause false hits.)
+  const seen = new Set();
+  const opts = [];
   for (const selector of OPTION_SELECTORS) {
-    const options = Array.from(document.querySelectorAll(selector))
-      .filter(o => o.offsetParent !== null); // visible only
-    if (!options.length) continue;
-
-    // Exact text match first
-    const exact = options.find(o => o.textContent.trim().toLowerCase() === lower);
-    if (exact) return exact;
-
-    // Contains match
-    const contains = options.find(o => o.textContent.trim().toLowerCase().includes(lower));
-    if (contains) return contains;
+    document.querySelectorAll(selector).forEach(o => {
+      if (o.offsetParent === null || seen.has(o)) return;
+      seen.add(o);
+      const t = (o.textContent || '').trim();
+      if (t) opts.push({ o, l: t.toLowerCase() });
+    });
   }
+  if (!opts.length) return null;
+
+  const placeholder = l => /^select|^choose|^--|^please|no options|no results/.test(l);
+
+  // Bot's pickBest ladder: exact → starts-with → yes/no semantic → contains
+  let m = opts.find(x => x.l === lower);                                   if (m) return m.o;
+  m = opts.find(x => new RegExp('^' + esc(lower)).test(x.l));              if (m) return m.o;
+  if (isYes) { m = opts.find(x => /\byes\b|^i am\b|^authorized\b|^eligible\b|^i do not wish|^i prefer not/.test(x.l) && !/\bno\b/.test(x.l)); if (m) return m.o; }
+  if (isNo)  { m = opts.find(x => /\bno\b|^i do not\b|^i am not\b|^not\b|^does not/.test(x.l)            && !/\byes\b/.test(x.l)); if (m) return m.o; }
+  m = opts.find(x => !placeholder(x.l) && lower && x.l.includes(lower));   if (m) return m.o;
   return null;
 }
 
