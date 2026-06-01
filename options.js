@@ -86,7 +86,7 @@ $('claudeEnabled').addEventListener('change', function () {
   updateClaudeToggleUI(this.checked);
 });
 
-chrome.storage.local.get(['resumeData', 'claudeApiKey', 'claudeEnabled', 'resumeFile', 'resumeText', 'learnedAnswers'], d => {
+chrome.storage.local.get(['resumeData', 'claudeApiKey', 'claudeEnabled', 'resumeFile', 'resumeFilePath', 'resumeText', 'learnedAnswers'], d => {
   // Profile fields
   const r = d.resumeData || {};
   RESUME_FIELDS.forEach(f => {
@@ -107,6 +107,9 @@ chrome.storage.local.get(['resumeData', 'claudeApiKey', 'claudeEnabled', 'resume
     $('resume-filename').textContent = '📎 ' + (d.resumeFile.name || 'resume');
     $('resume-upload-box').classList.add('has-file');
   }
+
+  // Resume file path (for trusted auto-attach)
+  if (d.resumeFilePath) $('resumeFilePath').value = d.resumeFilePath;
 
   // Resume text
   if (d.resumeText) $('resumeText').value = d.resumeText;
@@ -623,9 +626,10 @@ $('btn-save').addEventListener('click', () => {
     }
   });
 
-  const claudeApiKey  = $('claudeApiKey').value.trim();
-  const claudeEnabled = $('claudeEnabled').checked;
-  const resumeText    = $('resumeText').value.trim();
+  const claudeApiKey   = $('claudeApiKey').value.trim();
+  const claudeEnabled  = $('claudeEnabled').checked;
+  const resumeText     = $('resumeText').value.trim();
+  const resumeFilePath = $('resumeFilePath').value.trim();
 
   // 1. Feed answered learned fields into matching named profile inputs
   Object.entries(learnedAnswers).forEach(([label, val]) => {
@@ -648,7 +652,7 @@ $('btn-save').addEventListener('click', () => {
   });
 
   chrome.storage.sync.set({ backendUrl: $('backendUrl').value.trim() });
-  chrome.storage.local.set({ resumeData, claudeApiKey, claudeEnabled, resumeText, learnedAnswers }, () => {
+  chrome.storage.local.set({ resumeData, claudeApiKey, claudeEnabled, resumeText, resumeFilePath, learnedAnswers }, () => {
     const toast = $('toast');
     toast.classList.add('show');
     setTimeout(() => toast.classList.remove('show'), 2000);

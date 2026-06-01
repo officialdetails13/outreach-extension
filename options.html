@@ -337,6 +337,12 @@
         </div>
 
         <div class="field" style="margin-top:12px;">
+          <label>Resume file path (for auto-attach)</label>
+          <input type="text" id="resumeFilePath" placeholder="/Users/you/Documents/My_Resume.pdf" />
+          <p class="hint">Full path to your résumé on disk. Required to auto-attach on forms that block synthetic uploads (most ATS). Tip: in Finder, right-click the file → hold ⌥ Option → "Copy as Pathname".</p>
+        </div>
+
+        <div class="field" style="margin-top:12px;">
           <label>Resume Text</label>
           <textarea id="resumeText" rows="9" placeholder="Paste your full resume here — used by Claude to answer essay questions and fill your profile."></textarea>
           <p class="hint">More detail = better AI answers.</p>
