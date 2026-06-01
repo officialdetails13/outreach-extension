@@ -467,7 +467,18 @@ async function handleAutofillClick() {
       return;
     }
     if (outcome === 'advanced') {
-      await sleep(800);   // let the next step render, then loop to fill it
+      // Let the next step render. Some ATSs (SmartRecruiters) load a step's
+      // question labels asynchronously a beat after the fields appear, so wait for
+      // the field set to settle before scanning — otherwise labels read empty and
+      // questions get mis-mapped. (The per-step retry loop is a second safety net.)
+      await sleep(900);
+      let sig = '';
+      for (let i = 0; i < 8; i++) {
+        const cur = scanAllFields().map(f => f.label || f.name || '').join('|');
+        if (cur && cur === sig) break;   // stabilised
+        sig = cur;
+        await sleep(350);
+      }
       continue;
     }
     // Errors that wouldn't clear, or genuinely stuck — hand back to the user.
@@ -787,6 +798,29 @@ function getLabel(el) {
     if (ref) return cleanLabelText(ref.innerText);
   }
 
+  // 2.5 Web-component question wrappers (SmartRecruiters sr-question-field-*,
+  //     spl-form-field, …) render the question text inside shadow DOM, so <label>
+  //     and textContent miss it (the field's own shadow only holds the "*"). The
+  //     wrapper's rendered innerText holds the real question — climb to it.
+  let wnode = el.parentElement || (el.getRootNode() instanceof ShadowRoot ? el.getRootNode().host : null);
+  for (let i = 0; i < 16 && wnode; i++) {
+    const tag = (wnode.tagName || '').toLowerCase();
+    // Prefer a real question wrapper; the inner spl-internal-form-field only holds
+    // the "*" marker, so an empty/punctuation-only result keeps climbing.
+    if (/sr-question|question-field|field-select|form-field/.test(tag)) {
+      const t = (wnode.innerText || '')
+        .replace(/\bthis field is required\.?/ig, '')
+        .replace(/no suggestions?/ig, '')
+        .replace(/value is required\.?/ig, '')
+        .replace(/select\.\.\.?/ig, '')
+        .replace(/[*✱]/g, '')
+        .replace(/\brequired\b/ig, '')
+        .replace(/\s+/g, ' ').trim();
+      if (t && t.length >= 2 && t.length < 140) return t;
+    }
+    wnode = wnode.parentElement || (wnode.getRootNode() instanceof ShadowRoot ? wnode.getRootNode().host : null);
+  }
+
   // 3. Walk up the DOM, look for a DIRECT CHILD label/legend of each ancestor
   //    Skip labels that themselves wrap an input (option-item pattern)
   let node = el.parentElement;
@@ -916,10 +950,19 @@ const SELECT_MAP = [
     valueMap: { 'Yes': ['yes', 'authorized', 'eligible', 'i am', 'true'], 'No': ['no', 'not', 'false'] },
   },
   {
-    // "Have you previously been employed here / are you currently an employee?" — No
-    re: /previous(ly)?.*employ|prior.*employ|currently.*employ|worked.*(here|for us).*before|former.*employee/i,
+    // "Have you previously been employed / performed work here?" — No
+    re: /previous(ly)?.*(employ|work|perform)|prior.*(employ|work)|currently.*employ|perform(ed)?.*work.*for|worked.*(here|for)|former.*employee/i,
     value: 'No',
     valueMap: { 'Yes': ['yes', 'true'], 'No': ['no', 'false'] },
+  },
+  {
+    // "Select the appropriate visa type" / "What type of visa do you hold?" — for a
+    // work-authorized applicant who doesn't need sponsorship, the correct answer is
+    // "Not applicable". SAFETY: never selects a specific visa or any citizenship/PR
+    // status; consistent with the sponsorship=No / authorized=Yes stance.
+    re: /visa.?type|type.?of.?visa|appropriate.?visa|which.?visa|select.*visa/i,
+    value: 'Not applicable',
+    valueMap: { 'Not applicable': ['not.?applicable', 'n/?a', 'none', 'not.?apply'] },
   },
   {
     // "Are you 18 years of age or older?"
@@ -1260,8 +1303,11 @@ async function fillCombobox(field, value) {
     // Type to filter if needed (long lists / async autocompletes), then look again.
     // Use real keystrokes (autocompletes like SmartRecruiters' city lookup only
     // search on keydown/keyup), and poll for a few seconds since results are
-    // fetched asynchronously. Never type the decline sentinel.
-    if (!matched && !isDecline && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+    // fetched asynchronously. Never type the decline sentinel, and don't type a
+    // money value into a salary-range list (it would filter out every bracket —
+    // findDropdownOption's numeric matcher needs the full list visible).
+    const isMoney = MONEY_RE.test(String(value).trim());
+    if (!matched && !isDecline && !isMoney && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
       didType = true;
       await typeWithKeys(el, value);
       for (let i = 0; i < 14 && !matched; i++) { await sleep(300); matched = findDropdownOption(searchVal, value); }
@@ -1315,14 +1361,14 @@ async function fillCombobox(field, value) {
     await sleep(300);
     if (committed()) { el.classList.add('ot-filled'); return true; }
 
-    // Finite-option keyboard widget that showed options on open: arrow to the
-    // matched option's index (committed() rejects a wrong landing — e.g. it will
-    // never accept "Yes" for a question we answered "No").
-    if (!didType && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
-      const nav = deepQueryAll('spl-select-option, [role="option"], [role="listbox"] li').filter(isVisible);
-      let idx = nav.indexOf(matched);
-      if (idx < 0) idx = nav.findIndex(o => (o.textContent || '').trim().toLowerCase() === wantText);
-      if (idx >= 0 && idx <= 25 && await pickByArrows(idx + 1)) { el.classList.add('ot-filled'); return true; }
+    // Click didn't commit (keyboard-nav typeable combobox, e.g. SmartRecruiters):
+    // filter to the option by typing its exact text, then ArrowDown+Enter takes the
+    // now-top match. Robust — no index counting that races the widget's highlight.
+    if (!didType && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && wantText) {
+      const optText = (matched.textContent || '').trim();
+      await typeWithKeys(el, optText);
+      for (let i = 0; i < 12; i++) { await sleep(250); if (findDropdownOption(wantText, optText)) break; }
+      if (await pickByArrows(1)) { el.classList.add('ot-filled'); return true; }
     }
 
     // Wrong/blank — close any open menu and retry once.
@@ -1330,6 +1376,30 @@ async function fillCombobox(field, value) {
     await sleep(150);
   }
   return false; // never leaves a wrong selection
+}
+
+// Money parsing for salary-range dropdowns. Bare small numbers are treated as
+// thousands ("150" → 150000); a k/m suffix anywhere in a range applies to both ends.
+const MONEY_RE = /^\$?\s*[\d][\d,.\s]*[kKmM]?\+?$/;
+function moneyToNum(numStr, suffix) {
+  let n = parseFloat(String(numStr).replace(/[^0-9.]/g, ''));
+  if (isNaN(n)) return null;
+  const s = (suffix || '').toLowerCase();
+  if (s === 'k') n *= 1e3; else if (s === 'm') n *= 1e6; else if (n < 1000) n *= 1e3;
+  return n;
+}
+function parseMoney(str) {
+  const m = String(str).match(/([\d][\d,.]*)\s*([kKmM])?/);
+  return m ? moneyToNum(m[1], m[2]) : null;
+}
+function parseMoneyRange(str) {
+  const nums = [...String(str).matchAll(/([\d][\d,.]*)\s*([kKmM])?/g)];
+  if (nums.length < 2) return null;
+  const suffix = (String(str).match(/[kKmM]/) || [])[0];
+  const lo = moneyToNum(nums[0][1], nums[0][2] || suffix);
+  const hi = moneyToNum(nums[1][1], nums[1][2] || suffix);
+  if (lo == null || hi == null) return null;
+  return { lo: Math.min(lo, hi), hi: Math.max(lo, hi) };
 }
 
 function findDropdownOption(searchVal, rawValue) {
@@ -1388,6 +1458,23 @@ function findDropdownOption(searchVal, rawValue) {
   if (isYes) { m = opts.find(x => /\byes\b|^i am\b|^authorized\b|^eligible\b/.test(x.l) && !/\bno\b/.test(x.l)); if (m) return m.o; }
   if (isNo)  { m = opts.find(x => /\bno\b|^i do not\b|^i am not\b|^not\b|^does not/.test(x.l)            && !/\byes\b/.test(x.l)); if (m) return m.o; }
   m = opts.find(x => !placeholder(x.l) && lower && x.l.includes(lower));   if (m) return m.o;
+
+  // Salary / numeric-range fallback: a money value (e.g. expected salary) → the
+  // bracket option that contains it ("$150-$174K"). Gated to money-shaped values
+  // so it never fires on codes like "H1B".
+  if (MONEY_RE.test(String(rawValue != null ? rawValue : searchVal).trim())) {
+    const want = parseMoney(tgt);
+    if (want != null) {
+      for (const x of opts) {
+        if (placeholder(x.l)) continue;
+        const rng = parseMoneyRange(x.l);
+        if (rng && want >= rng.lo && want <= rng.hi) return x.o;
+      }
+      // open-ended top bracket ("$250K+")
+      const open = opts.map(x => ({ x, mm: x.l.match(/([\d.,]+)\s*([km]?)\s*\+/i) })).find(o => o.mm);
+      if (open && want >= moneyToNum(open.mm[1], open.mm[2])) return open.x.o;
+    }
+  }
   return null;
 }
 
