@@ -201,39 +201,21 @@ function hasVisibleForm() {
 }
 
 async function clickApplyButton() {
-  const RE = /\b(apply|apply now|apply for this job|quick apply|start application)\b/i;
+  const RE = /\b(apply|apply now|apply for this job|quick apply|easy apply|start application|i'?m interested)\b/i;
   const candidates = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="submit"]'))
-    .filter(el => el.offsetParent && RE.test(el.textContent.trim() || el.value || ''));
+    .filter(el => {
+      const t = (el.textContent || el.value || '').trim();
+      return el.offsetParent && t.length < 40 && RE.test(t);
+    });
   if (!candidates.length) return false;
-  candidates[0].click();
-  await sleep(2000);
-  return true;
-}
-
-async function clickSubmitButton() {
-  const RE = /\b(submit|submit application|send application|next|continue|save and continue|apply now)\b/i;
-
-  // Find the best submit target, in priority order.
-  let btn =
-    Array.from(document.querySelectorAll('button[type="submit"], input[type="submit"]'))
-      .filter(el => el.offsetParent && !el.disabled)[0] ||
-    Array.from(document.querySelectorAll('button, [role="button"], a[type="submit"]'))
-      .filter(el => el.offsetParent && !el.disabled && RE.test((el.textContent || el.value || '').trim()))
-      .sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top)[0] ||
-    Array.from(document.querySelectorAll('form button:not([type="reset"]):not([type="button"])'))
-      .filter(el => el.offsetParent && !el.disabled).slice(-1)[0];
-
-  if (!btn) return false;
-
-  // Prefer a TRUSTED click (react submit handlers may ignore synthetic events,
-  // same as the dropdowns); fall back to a synthetic click + form.requestSubmit.
-  const ok = await trustedClickEl(btn);
-  if (!ok) {
-    btn.click();
-    const form = btn.closest('form');
-    if (form && form.requestSubmit) { try { form.requestSubmit(btn); } catch {} }
+  // Trusted click (some Apply buttons are react-gated, like the dropdowns).
+  await trustedClickButton(candidates[0]);
+  // Wait for the application form to render (lazy load / SPA / navigation).
+  for (let i = 0; i < 14; i++) {
+    await sleep(500);
+    if (hasVisibleForm()) return true;
   }
-  return true;
+  return hasVisibleForm();
 }
 
 async function captureValidationErrors() {
@@ -306,32 +288,123 @@ async function handleAutofillClick() {
 async function handleAutofillClickInner() {
   setOverlayState('loading');
 
-  const { resumeData, claudeApiKey, claudeEnabled, resumeFile, resumeFilePath, resumeText, learnedAnswers } = await getStorage();
+  const storage = await getStorage();
+  const { resumeData, learnedAnswers } = storage;
   if (!resumeData || !Object.keys(resumeData).length) {
     showToast('⚠️ No profile data. Open extension → Settings and fill in your profile first.', 'warn');
     setOverlayState('idle');
     return;
   }
 
-  // Step 0: deduplication — warn if already applied to this job
+  // Deduplication — warn if already applied to this job
   if (await isAlreadyApplied()) {
     const proceed = confirm('⚠️ You have already applied to this job.\n\nClick OK to apply again, or Cancel to skip.');
     if (!proceed) { setOverlayState('idle'); return; }
   }
 
-  // Step 0b: if no form is visible, try clicking an Apply button first
+  // Ensure an application form is visible — click Apply and wait for it to render.
   if (!hasVisibleForm()) {
-    showToast('🔍 No form visible — looking for Apply button...', 'info');
+    showToast('🔍 No form visible — clicking Apply…', 'info');
     const clicked = await clickApplyButton();
-    if (!clicked) {
+    if (!clicked || !hasVisibleForm()) {
       showToast('⚠️ No form or Apply button found on this page.', 'warn');
       setOverlayState('idle');
       return;
     }
-    showToast('✅ Clicked Apply — form loading...', 'info');
-    await sleep(500);
+    showToast('✅ Apply clicked — form loaded.', 'info');
   }
 
+  // ── Multi-page loop ─────────────────────────────────────────────────────────
+  // Fill the current step, then advance (Next) or submit (last step). Only log
+  // "applied" on a real confirmation — never on an intermediate page.
+  const MAX_PAGES = 6;
+  let totalFilled = 0;
+
+  for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
+    if (isConfirmed()) {
+      await logApplication('applied');
+      setOverlayState('done');
+      showToast(`✅ Submitted — application complete.`, 'success');
+      return;
+    }
+
+    setOverlayState('loading');
+    totalFilled += await fillCurrentPage(storage);
+
+    const adv = findAdvanceButton();
+    if (!adv) {
+      setOverlayState('done');
+      showToast(`✅ Filled ${totalFilled} field${totalFilled !== 1 ? 's' : ''}. No Submit/Next button — finish manually.`, 'info');
+      return;
+    }
+
+    const sigBefore = pageSignature();
+    let outcome = 'stuck';            // confirmed | advanced | errors | stuck
+    let lastErrors = [];
+
+    // Up to 3 tries on THIS step: top up required-empty fields, click advance, inspect.
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const empties = scanAllFields().filter(f =>
+        isRequiredField(f) && !isFieldFilled(f) && f.type !== 'file' && f.type !== 'checkbox');
+      if (empties.length) await refillFields(empties, resumeData, learnedAnswers);
+
+      const btn = findAdvanceButton();
+      if (!btn) break;
+      showToast(btn.kind === 'submit'
+        ? `✅ Filled ${totalFilled} — submitting…`
+        : `➡️ Step ${pageNum} filled — continuing…`, 'info');
+      await trustedClickButton(btn.el);
+      await sleep(1700); // let navigation / validation render
+
+      if (isConfirmed()) { outcome = 'confirmed'; break; }
+
+      lastErrors = await captureValidationErrors();
+      if (lastErrors.length) {
+        highlightFailedFields(lastErrors);
+        await refillFields(lastErrors, resumeData, learnedAnswers);
+        outcome = 'errors';
+        await sleep(400);
+        continue;
+      }
+
+      if (pageSignature() !== sigBefore) { outcome = 'advanced'; break; }
+      // No confirmation, no errors, no page change: a Submit likely went through
+      // via a quiet redirect; a Next that didn't move is stuck.
+      outcome = (btn.kind === 'submit') ? 'confirmed' : 'stuck';
+      break;
+    }
+
+    if (outcome === 'confirmed') {
+      await logApplication('applied');
+      setOverlayState('done');
+      showToast(`✅ Submitted — application complete (${totalFilled} fields).`, 'success');
+      return;
+    }
+    if (outcome === 'advanced') {
+      await sleep(800);   // let the next step render, then loop to fill it
+      continue;
+    }
+    // Errors that wouldn't clear, or genuinely stuck — hand back to the user.
+    const errs = lastErrors.length ? lastErrors : await captureValidationErrors();
+    highlightFailedFields(errs);
+    if (errs.length) await saveLearnedFields(errs);
+    await logApplication('failed');
+    setOverlayState('error');
+    showToast(errs.length
+      ? `⚠️ ${errs.length} field${errs.length !== 1 ? 's' : ''} need attention — highlighted in red.`
+      : `⚠️ Couldn't advance past this step — please finish manually.`, 'warn');
+    return;
+  }
+
+  setOverlayState('done');
+  showToast(`Reached the ${MAX_PAGES}-step limit — review & submit the final step manually.`, 'info');
+}
+
+// Fill every fillable field currently on the page: consent checkboxes, then
+// resume-profile mapping, learned answers, and (optionally) Claude for the rest.
+// Returns how many fields were filled. Safe to call once per page in a wizard.
+async function fillCurrentPage(storage) {
+  const { resumeData, claudeApiKey, claudeEnabled, resumeFile, resumeFilePath, resumeText, learnedAnswers } = storage;
   const fields   = scanAllFields();
   const unmapped = [];
   let   filled   = 0;
@@ -340,24 +413,20 @@ async function handleAutofillClickInner() {
   const CONSENT_RE = /\b(agree|consent|certif|acknowledg|confirm|accept|authorize|authoris|attest|declare|understand|warrant)\b|terms|privacy.?polic|background.?check/i;
   for (const field of fields) {
     if (field.type !== 'checkbox') continue;
-    if (!isRequiredField(field)) continue; // mandatory only
-    // Check label AND full surrounding text (label may not be extracted for nested checkboxes)
+    if (!isRequiredField(field)) continue;
     const surrounding = field.el?.closest('label, .field, .form-group, li')?.innerText || '';
-    const text = (field.label || '') + ' ' + surrounding;
-    if (!CONSENT_RE.test(text)) continue;
+    if (!CONSENT_RE.test((field.label || '') + ' ' + surrounding)) continue;
     fillCheckbox(field.el, 'yes');
     filled++;
   }
 
   // Pass 1: fill from resume profile data
   for (const field of fields) {
-    if (field.type === 'checkbox') continue; // already handled above
-    // File inputs — whitelist: only fill inputs explicitly labeled resume/CV.
-    // Everything else (cover letter, portfolio, other docs) is left untouched.
+    if (field.type === 'checkbox') continue;
     if (field.type === 'file') {
       const fel = field.el;
-      // Don't trust field.label alone — for file inputs getLabel often returns the
-      // "Attach" button text. Detect from id/name/aria + the resume-aware helper.
+      // getLabel often returns the "Attach" button text for file inputs — detect
+      // from id/name/aria + the resume-aware helper instead.
       const hay = `${field.label || ''} ${getFileInputLabel(fel)} ${fel.id || ''} ${fel.name || ''} ${fel.getAttribute('aria-label') || ''}`.toLowerCase();
       const isCoverLetter = /cover.?letter/i.test(hay);
       const isResumeInput = !isCoverLetter && /\b(resume|cv|curriculum.?vitae)\b/i.test(hay);
@@ -366,50 +435,38 @@ async function handleAutofillClickInner() {
         if (ok) filled++;
         else clickAttachButton(fel) || highlightFileInput(fel);
       }
-      // All other file inputs intentionally skipped
       continue;
     }
 
     const value = mapFromResume(field, resumeData);
     if (value !== null && value !== undefined && value !== '') {
       const ok = await fillField(field, value);
-      if (ok) {
-        filled++;
-        if (requiresValidation(field) && !validateSelectableField(field)) unmapped.push(field);
-      } else {
-        unmapped.push(field);
-      }
-    } else {
-      // Only queue optional fields for further passes if user has explicit answer
-      if (isRequiredField(field)) unmapped.push(field);
+      if (ok) { filled++; if (requiresValidation(field) && !validateSelectableField(field)) unmapped.push(field); }
+      else unmapped.push(field);
+    } else if (isRequiredField(field)) {
+      unmapped.push(field);
     }
     await sleep(30);
   }
 
-  // Pass 2: check learned answers (user-supplied answers from previous runs)
+  // Pass 2: learned answers (user-supplied from previous runs)
   const stillUnmapped = [];
   for (const field of unmapped) {
-    const key   = (field.label || field.name || '').trim();
-    const entry = learnedAnswers[key];
+    const key    = (field.label || field.name || '').trim();
+    const entry  = learnedAnswers[key];
     const answer = entry && (typeof entry === 'string' ? entry : entry.answer);
     if (answer) {
       const ok = await fillField(field, answer);
-      if (ok) {
-        filled++;
-        if (requiresValidation(field)) validateSelectableField(field);
-      } else {
-        if (isRequiredField(field)) stillUnmapped.push(field);
-      }
-    } else {
-      if (isRequiredField(field)) stillUnmapped.push(field);
+      if (ok) { filled++; if (requiresValidation(field)) validateSelectableField(field); }
+      else if (isRequiredField(field)) stillUnmapped.push(field);
+    } else if (isRequiredField(field)) {
+      stillUnmapped.push(field);
     }
     await sleep(30);
   }
 
   // Pass 3: Claude only for REQUIRED fields still unmapped
-  const claudeFields = stillUnmapped.filter(f =>
-    f.type !== 'file' && f.type !== 'checkbox' && isRequiredField(f)
-  );
+  const claudeFields = stillUnmapped.filter(f => f.type !== 'file' && f.type !== 'checkbox' && isRequiredField(f));
   if (claudeFields.length && claudeEnabled && claudeApiKey) {
     setOverlayState('claude');
     try {
@@ -419,18 +476,11 @@ async function handleAutofillClickInner() {
       for (const { field, answer } of answers) {
         if (answer) {
           const ok = await fillField(field, answer);
-          if (ok) {
-            filled++;
-            if (requiresValidation(field)) validateSelectableField(field);
-          } else {
-            truelyUnfilled.push(field);
-          }
-        } else {
-          truelyUnfilled.push(field);
-        }
+          if (ok) { filled++; if (requiresValidation(field)) validateSelectableField(field); }
+          else truelyUnfilled.push(field);
+        } else truelyUnfilled.push(field);
         await sleep(30);
       }
-      // Save any fields Claude couldn't answer for user to fill in Settings
       if (truelyUnfilled.length) await saveLearnedFields(truelyUnfilled);
     } catch (err) {
       showToast(`🤖 Claude error: ${err.message}`, 'warn');
@@ -442,61 +492,45 @@ async function handleAutofillClickInner() {
     showToast(`💡 ${claudeFields.length} field${claudeFields.length !== 1 ? 's' : ''} saved to Settings → "Saved Form Answers" (${reason}).`, 'info');
   }
 
-  // Step 4: submit with a fix-and-retry loop (ported from the bot's verifyAndSubmit).
-  // Instead of giving up on the first validation failure, re-fill the offending
-  // fields and resubmit until the page reaches a confirmation state.
-  setOverlayState('loading');
-  showToast(`✅ Filled ${filled} fields — submitting...`, 'info');
+  return filled;
+}
 
-  const MAX_SUBMITS = 3;
-  let lastErrors = [];
-  for (let attempt = 1; attempt <= MAX_SUBMITS; attempt++) {
-    // Top up any required-but-empty fields before each submit
-    // (skip-if-set guards in fillText/fillCombobox prevent double-typing).
-    const empties = scanAllFields().filter(f =>
-      isRequiredField(f) && !isFieldFilled(f) && f.type !== 'file' && f.type !== 'checkbox'
-    );
-    if (empties.length) await refillFields(empties, resumeData, learnedAnswers);
+// Find the button to move the form forward. Distinguishes a final Submit from an
+// intermediate Next/Continue so the multi-page loop knows whether it's done.
+function findAdvanceButton() {
+  const txt = el => (el.textContent || el.value || '').trim();
+  const vis = el => el.offsetParent && !el.disabled;
+  const all = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"], a[type="submit"]')).filter(vis);
+  const SUBMIT = /\b(submit application|submit your application|submit|send application|finish|complete application)\b/i;
+  const NEXT   = /\b(next|continue|save and continue|save & continue|review|proceed)\b/i;
+  const byBottom = (a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top;
 
-    const submitted = await clickSubmitButton();
-    if (!submitted) {
-      setOverlayState('done');
-      showToast(`✅ Filled ${filled} field${filled !== 1 ? 's' : ''}. No submit button found — click it manually.`, 'info');
-      return;
-    }
+  const submitBtns = all.filter(el => SUBMIT.test(txt(el)) && txt(el).length < 40).sort(byBottom);
+  if (submitBtns.length) return { el: submitBtns[0], kind: 'submit' };
+  const nextBtns = all.filter(el => NEXT.test(txt(el)) && txt(el).length < 40).sort(byBottom);
+  if (nextBtns.length) return { el: nextBtns[0], kind: 'next' };
+  const native = all.find(el => el.type === 'submit');
+  if (native) return { el: native, kind: 'submit' };
+  const formBtns = all.filter(el => el.closest('form') && el.tagName === 'BUTTON' && el.type !== 'reset' && el.type !== 'button');
+  if (formBtns.length) return { el: formBtns[formBtns.length - 1], kind: 'submit' };
+  return null;
+}
 
-    await sleep(1600); // let navigation / validation render
+// A fingerprint of the current step — changes when the form advances to a new page.
+function pageSignature() {
+  const labels  = scanAllFields().map(f => (f.label || f.name || '')).filter(Boolean).slice(0, 25).join('|');
+  const heading = (document.querySelector('h1, h2, [class*="step"], [class*="progress"], [aria-current="step"]') || {}).textContent || '';
+  return (location.href + '::' + heading.slice(0, 50) + '::' + labels).slice(0, 600);
+}
 
-    if (isConfirmed()) {
-      await logApplication('applied');
-      setOverlayState('done');
-      showToast(`✅ Submitted — confirmation page reached.`, 'success');
-      return;
-    }
-
-    lastErrors = await captureValidationErrors();
-    if (!lastErrors.length) {
-      // Submit consumed, no errors surfaced, no explicit confirmation text:
-      // treat as submitted (many ATS confirm via a quiet redirect).
-      await logApplication('applied');
-      setOverlayState('done');
-      showToast(`✅ Submitted (${filled} fields) — no validation errors.`, 'success');
-      return;
-    }
-
-    if (attempt < MAX_SUBMITS) {
-      showToast(`↻ ${lastErrors.length} field${lastErrors.length !== 1 ? 's' : ''} need fixing — retrying (${attempt}/${MAX_SUBMITS})…`, 'info');
-      await refillFields(lastErrors, resumeData, learnedAnswers);
-      await sleep(400);
-    }
+// Trusted click on a submit/next button (synthetic + requestSubmit fallback).
+async function trustedClickButton(el) {
+  const ok = await trustedClickEl(el);
+  if (!ok) {
+    el.click();
+    const form = el.closest('form');
+    if (form && form.requestSubmit) { try { form.requestSubmit(el.type === 'submit' ? el : undefined); } catch {} }
   }
-
-  // Exhausted retries — highlight what's still wrong for manual finish.
-  highlightFailedFields(lastErrors);
-  await saveLearnedFields(lastErrors);
-  await logApplication('failed');
-  setOverlayState('error');
-  showToast(`⚠️ ${lastErrors.length} field${lastErrors.length !== 1 ? 's' : ''} still failing after ${MAX_SUBMITS} attempts — highlighted in red.`, 'warn');
 }
 
 // True once the page shows a real application-confirmation state — prevents
