@@ -233,13 +233,29 @@ function isRequiredField(field) {
   const wrap = el.closest('[data-required="true"], [required], .required, .is-required, [class*="required"]');
   if (wrap && wrap !== el) return true;
 
-  // Cross-shadow owner marks it required (SmartRecruiters spl-checkbox: the "*" is
-  // in the custom element's shadow, not reachable via closest()).
+  // Climb to the field's own question/field wrapper (crossing shadow boundaries)
+  // and look for the "*" there — SmartRecruiters renders it in the wrapper's shadow
+  // (sr-question-field-*, spl-radio-group, spl-internal-form-field), unreachable via
+  // closest(). Stop at the first per-field wrapper so we don't pick up a sibling
+  // question's asterisk from a shared container.
+  let qn = el.parentElement || (el.getRootNode() instanceof ShadowRoot ? el.getRootNode().host : null);
+  for (let i = 0; i < 16 && qn; i++) {
+    const tag = (qn.tagName || '').toLowerCase();
+    if (/sr-question|field-select|spl-radio-group|spl-checkbox|internal-form-field/.test(tag)) {
+      const txt = (qn.innerText || '') + ' ' + (qn.shadowRoot ? qn.shadowRoot.textContent : '');
+      return /[*✱]/.test(txt) || /\brequired\b/i.test(txt);
+    }
+    qn = qn.parentElement || (qn.getRootNode() instanceof ShadowRoot ? qn.getRootNode().host : null);
+  }
+
+  // Cross-shadow owner marks it required (SmartRecruiters spl-checkbox: the real
+  // <input> is light-DOM but its <label for> — carrying the "*" — lives in the
+  // component's shadow, not reachable via closest()).
   if (el.id) {
     for (const root of deepRoots()) {
       if (!root.host) continue;
       let lbl; try { lbl = root.querySelector(`label[for="${CSS.escape(el.id)}"]`); } catch { continue; }
-      if (lbl && /[*✱]/.test(root.host.innerText || '')) return true;
+      if (lbl && (/[*✱]/.test(lbl.textContent || '') || /[*✱]/.test(root.host.innerText || ''))) return true;
     }
   }
 
