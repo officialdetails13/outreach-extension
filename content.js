@@ -489,8 +489,25 @@ async function fillCurrentPage(storage) {
     await sleep(30);
   }
 
-  // Pass 3: Claude only for REQUIRED fields still unmapped
-  const claudeFields = stillUnmapped.filter(f => f.type !== 'file' && f.type !== 'checkbox' && isRequiredField(f));
+  // Pass 2.5: voluntary demographic/EEO questions (pronouns, gender, sexual
+  // orientation, race/ethnicity, veteran, disability) — default to the "decline to
+  // self-identify" option. Privacy-preserving: we never fabricate these answers,
+  // and this clears the required-field validation that would otherwise block
+  // submission. A user-saved answer (Pass 2) always wins over this.
+  const demoUnfilled = [];
+  for (const field of stillUnmapped) {
+    if (!isDemographicField(field) || field.type === 'file' || field.type === 'checkbox') continue;
+    const ok = await fillDeclineOption(field);
+    if (ok) { filled++; if (requiresValidation(field)) validateSelectableField(field); }
+    else demoUnfilled.push(field);
+    await sleep(30);
+  }
+
+  // Pass 3: Claude for REQUIRED fields still unmapped — excluding demographic fields
+  // we just declined (only those with no decline option fall through to Claude).
+  const claudeFields = stillUnmapped.filter(f =>
+    f.type !== 'file' && f.type !== 'checkbox' && isRequiredField(f) &&
+    (!isDemographicField(f) || demoUnfilled.includes(f)));
   if (claudeFields.length && claudeEnabled && claudeApiKey) {
     setOverlayState('claude');
     try {
@@ -1068,13 +1085,36 @@ async function nativeClick(el) {
   } catch { return false; }
 }
 
+// ── DEMOGRAPHIC / EEO QUESTIONS ───────────────────────────────────────────────
+// Voluntary self-identification questions. When the user hasn't supplied an answer
+// we select the "decline to self-identify" option — we never fabricate these, and
+// declining is the option the form itself offers for exactly this case.
+const DEMOGRAPHIC_RE = /pronoun|gender|sexual.?orientation|\borientation\b|transgender|\brace\b|ethnic|hispanic|latin[oax]|veteran|disab|lgbt|self.?identif|identify.?with|demographic|national.?origin/i;
+const DECLINE_RE     = /decline|prefer.?not|don.?t.?wish|do.?not.?wish|not.?to.?(?:answer|say|disclose|identify|specify)|choose.?not|rather.?not|wish.?not|i.?prefer.?not|unspecified|not.?listed|no.?response/i;
+const DECLINE_TOKEN  = ' decline';
+
+function isDemographicField(field) {
+  return DEMOGRAPHIC_RE.test(`${field.label || ''} ${field.name || ''}`);
+}
+
+// Choose the "decline to self-identify / prefer not to answer" option on a
+// demographic combobox, native <select>, or radio group. Returns true if found.
+async function fillDeclineOption(field) {
+  if (field.type === 'combobox') return fillCombobox(field, DECLINE_TOKEN);
+  const opts = field.options || [];
+  const hit = opts.find(o => DECLINE_RE.test(o.text || '') || DECLINE_RE.test(o.value || ''));
+  if (!hit) return false;
+  return field.type === 'radio' ? fillRadio(field, hit.value) : fillSelect(field.el, hit.value);
+}
+
 // ── CUSTOM COMBOBOX FILLER ────────────────────────────────────────────────────
 async function fillCombobox(field, value) {
   const el = field.el;
+  const isDecline = value === DECLINE_TOKEN;
 
   // Normalise country values before trying to match
   const isCountry = /country|nation/i.test(field.label + field.name);
-  const searchVal = isCountry ? normaliseCountry(value) : String(value).toLowerCase();
+  const searchVal = isDecline ? '' : (isCountry ? normaliseCountry(value) : String(value).toLowerCase());
 
   const control = el.closest('[class*="select__control"], [class*="-control"], [class*="combo"]') || el.parentElement || el;
   const readCur = () => (control.querySelector('[class*="single-value"], [class*="singleValue"]')?.textContent || el.value || '').trim().toLowerCase();
@@ -1091,8 +1131,9 @@ async function fillCombobox(field, value) {
     await sleep(450);
     let matched = findDropdownOption(searchVal, value);
 
-    // Type to filter if needed (long lists), then look again.
-    if (!matched) {
+    // Type to filter if needed (long lists), then look again. Never type the
+    // decline sentinel — it isn't real text and would filter the list to nothing.
+    if (!matched && !isDecline) {
       triggerReactSetter(el, 'value', value);
       el.value = value;
       el.dispatchEvent(new Event('input',  { bubbles: true }));
@@ -1121,8 +1162,10 @@ async function fillCombobox(field, value) {
 
     // VERIFY: did the control actually commit the value we intended?
     const cur = readCur();
-    const good = cur && (cur === searchVal || cur.includes(searchVal) ||
-                         (wantText && (cur === wantText || cur.includes(wantText) || wantText.includes(cur))));
+    const good = isDecline
+      ? DECLINE_RE.test(cur)
+      : cur && (cur === searchVal || cur.includes(searchVal) ||
+                (wantText && (cur === wantText || cur.includes(wantText) || wantText.includes(cur))));
     if (good) { el.classList.add('ot-filled'); return true; }
     // Wrong/blank — close any open menu and retry once.
     await nativeClick(control).catch(() => {});
@@ -1169,12 +1212,18 @@ function findDropdownOption(searchVal, rawValue) {
   }
   if (!opts.length) return null;
 
+  // Demographic decline sentinel — match the "prefer not / decline" option only.
+  if (rawValue === DECLINE_TOKEN) {
+    const d = opts.find(x => DECLINE_RE.test(x.l));
+    return d ? d.o : null;
+  }
+
   const placeholder = l => /^select|^choose|^--|^please|no options|no results/.test(l);
 
   // Bot's pickBest ladder: exact → starts-with → yes/no semantic → contains
   let m = opts.find(x => x.l === lower);                                   if (m) return m.o;
   m = opts.find(x => new RegExp('^' + esc(lower)).test(x.l));              if (m) return m.o;
-  if (isYes) { m = opts.find(x => /\byes\b|^i am\b|^authorized\b|^eligible\b|^i do not wish|^i prefer not/.test(x.l) && !/\bno\b/.test(x.l)); if (m) return m.o; }
+  if (isYes) { m = opts.find(x => /\byes\b|^i am\b|^authorized\b|^eligible\b/.test(x.l) && !/\bno\b/.test(x.l)); if (m) return m.o; }
   if (isNo)  { m = opts.find(x => /\bno\b|^i do not\b|^i am not\b|^not\b|^does not/.test(x.l)            && !/\byes\b/.test(x.l)); if (m) return m.o; }
   m = opts.find(x => !placeholder(x.l) && lower && x.l.includes(lower));   if (m) return m.o;
   return null;
